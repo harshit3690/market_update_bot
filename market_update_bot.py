@@ -8,7 +8,7 @@ import pytz
 import logging
 from html.parser import HTMLParser
 
-# Simple HTML stripper
+# HTML stripper
 class MLStripper(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -112,23 +112,35 @@ def format_news_tweet(post):
     summary = post['summary'] if post['summary'] else post['title']  # Cleaned summary
     pub_date = post['published'][:10]  # e.g., "2025-03-01"
     
-    # Tweet 1: Main News Summary
-    key_info = summary[:50] if len(summary) > 50 else f"Reported {pub_date}."
-    context = "Could boost crypto adoption." if "advocate" in headline.lower() else "May shift market trends."
-    tags = ["#Crypto"]
+    # Tweet 1: Main News Summary with spacing
+    key_info = summary[:50] if len(summary) > 50 else f"Reported on {pub_date}."
+    context = (
+        "This move could rally the crypto community and push for "
+        "greater regulatory clarity in the sector." if "advocate" in headline.lower()
+        else "This development might influence crypto markets and regulatory talks."
+    )
+    tags = ["#Crypto", "#CryptoNews"]  # SEO base
     for word in headline.split():
         if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'xrp']:
             tags.append(f"#{word.upper()}")
-        elif word.lower() in ['etf', 'regulation', 'partnership']:
+        elif word.lower() in ['etf', 'regulation', 'partnership', 'futures']:
             tags.append(f"#{word.capitalize()}")
-    tags = tags[:3]
+    if "Vitalik" in headline:
+        tags.append("#EthereumCommunity")
+    tags = tags[:3]  # Limit for space
     
-    tweet1 = f"🚨 {headline}! 📈\n{key_info}\n{context}\n{' '.join(tags)}"
+    tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
     
-    # Tweet 2: Reply with More Details
-    extra_insights = f"CoinTelegraph: {summary[50:100] if len(summary) > 50 else summary}."
-    market_reaction = f"Community weighs in on {summary[100:130] if len(summary) > 100 else 'impact'}."
-    future_impact = f"Possible push for {tags[1][1:]} support." if len(tags) > 1 else "Future policy TBD."
+    # Tweet 2: Deeper reply
+    extra_insights = f"CoinTelegraph details: {summary[50:100] if len(summary) > 50 else summary}."
+    market_reaction = (
+        f"ETH holders and devs are vocal—{summary[100:150] if len(summary) > 100 else 'calls echo widely'}."
+        if "Vitalik" in headline else f"Markets await {summary[100:130] if len(summary) > 100 else 'next moves'}."
+    )
+    future_impact = (
+        f"Could spark a push for crypto freedom and impact ETH’s role in policy debates."
+        if "advocate" in headline.lower() else "Might set a precedent for future crypto regulations."
+    )
     tweet2 = f"{extra_insights}\n{market_reaction}\n{future_impact}"
     
     logger.info(f"News tweet 1: {tweet1}")
