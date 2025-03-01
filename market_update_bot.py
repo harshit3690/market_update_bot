@@ -1,18 +1,15 @@
 import tweepy
 from pycoingecko import CoinGeckoAPI
 import requests
-import schedule
-import time
+import sys
 from datetime import datetime
 import pytz
 
-# X API Credentials (replace with yours)
-API_KEY = "your_api_key"
+# X API Credentials (from GitHub Secrets)
+API_KEY = "your_api_key"  # Will use secrets via env
 API_SECRET = "your_api_secret"
 ACCESS_TOKEN = "your_access_token"
 ACCESS_TOKEN_SECRET = "your_access_token_secret"
-
-# CryptoPanic API (free tier, get from cryptopanic.com)
 CRYPTOPANIC_API_KEY = "your_cryptopanic_api_key"
 
 # Authenticate X API
@@ -26,18 +23,16 @@ cg = CoinGeckoAPI()
 # Timezone
 ist = pytz.timezone('Asia/Kolkata')
 
-# Track news to avoid duplicates
+# Track news to avoid duplicates (stored in memory, resets per run)
 posted_headlines = []
 
 # Market Update Function
 def get_market_update():
     coins = cg.get_coins_markets(vs_currency='usd', order='market_cap_desc', per_page=10, page=1)
-    # Sort by 24h % change for trending
     trending = max(coins, key=lambda x: abs(x['price_change_percentage_24h'] or 0))
-    # Filter BTC, ETH, and 2 others from top 10
     btc = next(c for c in coins if c['symbol'] == 'btc')
     eth = next(c for c in coins if c['symbol'] == 'eth')
-    others = [c for c in coins if c['id'] not in [trending['id'], btc['id'], eth['id'])][:2]
+    others = [c for c in coins if c['id'] not in [trending['id'], btc['id'], eth['id']]][:2]
     
     tweet = "📊 Market Update:\n"
     arrow = "⬆️" if trending['price_change_percentage_24h'] > 0 else "⬇️"
@@ -56,7 +51,7 @@ def get_crypto_news():
         headline = post['title']
         if headline not in posted_headlines:
             posted_headlines.append(headline)
-            if len(posted_headlines) > 20:  # Keep last 20 to avoid memory bloat
+            if len(posted_headlines) > 20:
                 posted_headlines.pop(0)
             return post
     return None
@@ -64,15 +59,14 @@ def get_crypto_news():
 def format_news_tweet(post):
     if not post:
         return None, None
-    headline = post['title'][:60]  # Shorten if needed
-    # Extract coin/event from headline (basic)
+    headline = post['title'][:60]
     tags = ["#Crypto"]
     for word in headline.split():
         if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol']:
             tags.append(f"#{word.upper()}")
         elif word.lower() in ['etf', 'regulation', 'partnership']:
             tags.append(f"#{word.capitalize()}")
-    tags = tags[:3]  # Max 3 tags
+    tags = tags[:3]
     
     tweet1 = f"🚨 {headline}! 📈 / {post.get('description', '')[:50]} / Impact? / {' '.join(tags)}"
     tweet2 = f"Details: {post.get('description', '')[:100]} / Market reacts TBD / Future TBD"
@@ -91,33 +85,20 @@ def tweet_content(content, reply_to=None):
         print(f"Error: {e}")
         return None
 
-# Scheduled Jobs
-def market_job():
-    content = get_market_update()
-    tweet_content(content)
-
-def news_job():
-    post = get_crypto_news()
-    if post:
-        tweet1, tweet2 = format_news_tweet(post)
-        if tweet1 and tweet2:
-            tweet1_id = tweet_content(tweet1)
-            if tweet1_id:
-                tweet_content(tweet2, tweet1_id)
-
-# Schedule (IST)
-schedule.every().day.at("13:30").do(market_job)  # Morning peak
-schedule.every().day.at("20:30").do(market_job)  # Afternoon peak
-schedule.every().day.at("02:00").do(news_job)    # Non-peak
-schedule.every().day.at("07:00").do(news_job)    # Non-peak
-schedule.every().day.at("11:30").do(news_job)    # Peak
-schedule.every().day.at("13:00").do(news_job)    # Peak
-schedule.every().day.at("15:00").do(news_job)    # Peak
-schedule.every().day.at("18:30").do(news_job)    # Peak
-schedule.every().day.at("20:00").do(news_job)    # Peak
-schedule.every().day.at("22:00").do(news_job)    # Peak
-
-# Run
-while True:
-    schedule.run_pending()
-    time.sleep(60)
+# Main Logic
+if __name__ == "__main__":
+    # Get cron time from Actions (e.g., "0 8 * * *" for 13:30 IST)
+    cron_time = sys.argv[1] if len(sys.argv) > 1 else "manual"
+    # Map UTC cron to IST action
+    market_times = ["0 8 * * *", "0 15 * * *"]  # 13:30, 20:30 IST
+    if cron_time in market_times:
+        content = get_market_update()
+        tweet_content(content)
+    else:
+        post = get_crypto_news()
+        if post:
+            tweet1, tweet2 = format_news_tweet(post)
+            if tweet1 and tweet2:
+                tweet1_id = tweet_content(tweet1)
+                if tweet1_id:
+                    tweet_content(tweet2, tweet1_id)
