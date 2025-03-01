@@ -6,6 +6,25 @@ import os
 from datetime import datetime
 import pytz
 import logging
+from html.parser import HTMLParser
+
+# Simple HTML stripper
+class MLStripper(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs = True
+        self.text = []
+    def handle_data(self, d):
+        self.text.append(d)
+    def get_data(self):
+        return ''.join(self.text)
+
+def strip_tags(html):
+    s = MLStripper()
+    s.feed(html)
+    return s.get_data()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -82,7 +101,7 @@ def get_crypto_news():
             if len(posted_headlines) > 20:
                 posted_headlines.pop(0)
             logger.info(f"Selected news: {headline}")
-            return {"title": headline, "summary": entry.summary, "published": entry.published}
+            return {"title": headline, "summary": strip_tags(entry.summary), "published": entry.published}
     logger.info("No new news found.")
     return None
 
@@ -90,12 +109,12 @@ def format_news_tweet(post):
     if not post:
         return None, None
     headline = post['title'][:60]
-    summary = post['summary'] if post['summary'] else post['title']  # Fallback to title
+    summary = post['summary'] if post['summary'] else post['title']  # Cleaned summary
     pub_date = post['published'][:10]  # e.g., "2025-03-01"
     
     # Tweet 1: Main News Summary
-    key_info = summary[:50] if summary else f"Reported {pub_date}."
-    context = "May signal bullish trends." if "futures" in headline.lower() else "Could shift crypto policy."
+    key_info = summary[:50] if len(summary) > 50 else f"Reported {pub_date}."
+    context = "Could boost crypto adoption." if "advocate" in headline.lower() else "May shift market trends."
     tags = ["#Crypto"]
     for word in headline.split():
         if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'xrp']:
@@ -107,9 +126,9 @@ def format_news_tweet(post):
     tweet1 = f"🚨 {headline}! 📈\n{key_info}\n{context}\n{' '.join(tags)}"
     
     # Tweet 2: Reply with More Details
-    extra_insights = f"CoinTelegraph reports: {summary[50:100] if len(summary) > 50 else summary[:50]}."
-    market_reaction = f"Markets eye {summary[100:130] if len(summary) > 100 else 'next moves'}."
-    future_impact = f"Could push {tags[1][1:]} higher." if len(tags) > 1 else "Future TBD."
+    extra_insights = f"CoinTelegraph: {summary[50:100] if len(summary) > 50 else summary}."
+    market_reaction = f"Community weighs in on {summary[100:130] if len(summary) > 100 else 'impact'}."
+    future_impact = f"Possible push for {tags[1][1:]} support." if len(tags) > 1 else "Future policy TBD."
     tweet2 = f"{extra_insights}\n{market_reaction}\n{future_impact}"
     
     logger.info(f"News tweet 1: {tweet1}")
