@@ -11,7 +11,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# X API credentials (from GitHub Secrets)
+# X API credentials
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
@@ -94,6 +94,7 @@ def format_news_tweet(post):
     if not post:
         return None, None
     headline = post['title'][:60]
+    desc = post.get('description', '') or headline  # Fallback to title if no desc
     tags = ["#Crypto"]
     for word in headline.split():
         if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol']:
@@ -102,8 +103,8 @@ def format_news_tweet(post):
             tags.append(f"#{word.capitalize()}")
     tags = tags[:3]
     
-    tweet1 = f"🚨 {headline}! 📈 / {post.get('description', '')[:50]} / Impact? / {' '.join(tags)}"
-    tweet2 = f"Details: {post.get('description', '')[:100]} / Market reacts TBD / Future TBD"
+    tweet1 = f"🚨 {headline}! 📈 / {desc[:50]} / Impact? / {' '.join(tags)}"
+    tweet2 = f"Details: {desc[:100]} / Market reacts TBD / Future TBD"
     logger.info(f"News tweet 1: {tweet1}")
     logger.info(f"News tweet 2: {tweet2}")
     return tweet1[:280], tweet2[:280]
