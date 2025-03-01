@@ -98,7 +98,7 @@ if __name__ == "__main__":
     cron_time = sys.argv[1] if len(sys.argv) > 1 else "manual"
     print(f"Running for cron: {cron_time}")
     market_times = ["0 8 * * *", "0 15 * * *"]  # 13:30, 20:30 IST
-    if cron_time in market_times:  # Revert to original after testing
+    if True:  # Force market for testing
         content = get_market_update()
         tweet_content(content)
     else:
