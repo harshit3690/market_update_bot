@@ -1,6 +1,6 @@
 import tweepy
 from pycoingecko import CoinGeckoAPI
-import requests
+import feedparser
 import sys
 import os
 from datetime import datetime
@@ -16,11 +16,10 @@ API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
-CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
 
 # Check credentials
 logger.info("Checking credentials...")
-for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET, "CRYPTOPANIC_API_KEY": CRYPTOPANIC_API_KEY}.items():
+for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET}.items():
     if not value:
         logger.error(f"{cred} is not set or empty!")
     else:
@@ -74,19 +73,16 @@ def get_market_update():
 
 # News Functions
 def get_crypto_news():
-    logger.info("Fetching news...")
-    url = f"https://cryptopanic.com/api/v1/posts/?auth_token={CRYPTOPANIC_API_KEY}&filter=hot"
-    response = requests.get(url).json()
-    logger.info(f"API response: {response}")
-    posts = response.get('results', [])
-    for post in posts:
-        headline = post['title']
+    logger.info("Fetching news from CoinTelegraph...")
+    feed = feedparser.parse("https://cointelegraph.com/rss")
+    for entry in feed.entries:
+        headline = entry.title
         if headline not in posted_headlines:
             posted_headlines.append(headline)
             if len(posted_headlines) > 20:
                 posted_headlines.pop(0)
             logger.info(f"Selected news: {headline}")
-            return post
+            return {"title": headline, "summary": entry.summary, "published": entry.published}
     logger.info("No new news found.")
     return None
 
@@ -94,17 +90,28 @@ def format_news_tweet(post):
     if not post:
         return None, None
     headline = post['title'][:60]
-    desc = post.get('description', '') or headline  # Fallback to title if no desc
+    summary = post['summary'] if post['summary'] else post['title']  # Fallback to title
+    pub_date = post['published'][:10]  # e.g., "2025-03-01"
+    
+    # Tweet 1: Main News Summary
+    key_info = summary[:50] if summary else f"Reported {pub_date}."
+    context = "May signal bullish trends." if "futures" in headline.lower() else "Could shift crypto policy."
     tags = ["#Crypto"]
     for word in headline.split():
-        if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol']:
+        if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'xrp']:
             tags.append(f"#{word.upper()}")
         elif word.lower() in ['etf', 'regulation', 'partnership']:
             tags.append(f"#{word.capitalize()}")
     tags = tags[:3]
     
-    tweet1 = f"🚨 {headline}! 📈 / {desc[:50]} / Impact? / {' '.join(tags)}"
-    tweet2 = f"Details: {desc[:100]} / Market reacts TBD / Future TBD"
+    tweet1 = f"🚨 {headline}! 📈\n{key_info}\n{context}\n{' '.join(tags)}"
+    
+    # Tweet 2: Reply with More Details
+    extra_insights = f"CoinTelegraph reports: {summary[50:100] if len(summary) > 50 else summary[:50]}."
+    market_reaction = f"Markets eye {summary[100:130] if len(summary) > 100 else 'next moves'}."
+    future_impact = f"Could push {tags[1][1:]} higher." if len(tags) > 1 else "Future TBD."
+    tweet2 = f"{extra_insights}\n{market_reaction}\n{future_impact}"
+    
     logger.info(f"News tweet 1: {tweet1}")
     logger.info(f"News tweet 2: {tweet2}")
     return tweet1[:280], tweet2[:280]
