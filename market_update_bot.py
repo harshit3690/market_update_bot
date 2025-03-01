@@ -49,6 +49,7 @@ def get_crypto_news():
     print("Fetching news...")
     url = f"https://cryptopanic.com/api/v1/posts/?auth_token={CRYPTOPANIC_API_KEY}&filter=hot"
     response = requests.get(url).json()
+    print(f"API response: {response}")
     posts = response.get('results', [])
     for post in posts:
         headline = post['title']
@@ -97,7 +98,7 @@ if __name__ == "__main__":
     cron_time = sys.argv[1] if len(sys.argv) > 1 else "manual"
     print(f"Running for cron: {cron_time}")
     market_times = ["0 8 * * *", "0 15 * * *"]  # 13:30, 20:30 IST
-    if cron_time in market_times:
+    if True:  # Force market for testing
         content = get_market_update()
         tweet_content(content)
     else:
