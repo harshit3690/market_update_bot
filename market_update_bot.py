@@ -37,10 +37,10 @@ def get_market_update():
     
     tweet = "📊 Market Update:\n"
     arrow = "⬆️" if trending['price_change_percentage_24h'] > 0 else "⬇️"
-    tweet += f"🌟 #{trending['symbol'].upper()} (Trending) +{trending['price_change_percentage_24h']:.2f}% {arrow} ${trending['current_price']:.2f}\n"
+    tweet += f"🌟 #{trending['symbol'].upper()} (Trending) {trending['price_change_percentage_24h']:.2f}% {arrow} ${trending['current_price']:.2f}\n"
     for coin in [btc, eth] + others:
         arrow = "⬆️" if coin['price_change_percentage_24h'] > 0 else "⬇️"
-        tweet += f"#{coin['symbol'].upper()} +{coin['price_change_percentage_24h']:.2f}% {arrow} ${coin['current_price']:.2f}\n"
+        tweet += f"#{coin['symbol'].upper()} {coin['price_change_percentage_24h']:.2f}% {arrow} ${coin['current_price']:.2f}\n"
     print(f"Market tweet: {tweet}")
     return tweet.strip()
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     cron_time = sys.argv[1] if len(sys.argv) > 1 else "manual"
     print(f"Running for cron: {cron_time}")
     market_times = ["0 8 * * *", "0 15 * * *"]  # 13:30, 20:30 IST
-    if True:  # Force market for testing
+    if cron_time in market_times:  # Revert to original after testing
         content = get_market_update()
         tweet_content(content)
     else:
