@@ -109,48 +109,42 @@ def get_crypto_news():
 def format_news_tweet(post):
     if not post:
         return None, None
-    headline = post['title'][:55]  # Shorter for space
-    summary = post['summary'] if post['summary'] else post['title']  # Cleaned summary
+    headline = post['title'][:60]  # Fit headline fully
+    summary = post['summary'] if post['summary'] else post['title']
     pub_date = post['published'][:10]  # e.g., "2025-03-03"
     
     # Tweet 1: Main News Summary with spacing
-    key_info = summary[:40] if len(summary) > 40 else f"Out {pub_date}."
-    context = (
-        "This could rally the community and push for clearer crypto rules ahead."
-        if "advocate" in headline.lower() else "May sway markets and policy talks soon."
-    )
-    tags = ["#Crypto", "#CryptoUpdate"]  # SEO base
+    key_info = summary[:60] if len(summary) > 60 else summary  # Full sentence
+    context = "Signals rising threats to crypto security." if "scams" in headline.lower() else "May shift policy talks."
+    tags = ["#Crypto", "#CryptoUpdate"]
     for word in headline.split():
         if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'xrp']:
             tags.append(f"#{word.upper()}")
-        elif word.lower() in ['etf', 'regulation', 'partnership', 'futures']:
+        elif word.lower() in ['etf', 'regulation', 'partnership', 'futures', 'scams']:
             tags.append(f"#{word.capitalize()}")
-    if "Vitalik" in headline:
-        tags.append("#ETHNews")
     tags = tags[:3]
     
-    # Build Tweet 1 incrementally
     tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
-    if len(tweet1) > 280:
+    if len(tweet1) > 280:  # Trim context if needed
         excess = len(tweet1) - 280
-        context = context[:-excess-3] + "..."  # Trim context, add ellipsis
+        context = context[:-(excess+3)] + "..." if excess < len(context) else "Impacts crypto."
         tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
     
-    # Tweet 2: Deeper reply, no "Via CoinTelegraph"
-    extra_insights = f"Details: {summary[40:100] if len(summary) > 40 else summary}."
-    market_reaction = (
-        f"ETH holders vocal—{summary[100:150] if len(summary) > 100 else 'calls echo widely'}."
-        if "Vitalik" in headline else f"Markets watch {summary[100:130] if len(summary) > 100 else 'next moves'}."
+    # Tweet 2: Deeper reply
+    insights = f"{summary[60:120] if len(summary) > 60 else summary}."
+    reaction = (
+        f"Markets brace—hackers hit hard in Feb."
+        if "scams" in headline.lower() else f"Community reacts to {summary[120:150] if len(summary) > 120 else 'news'}."
     )
-    future_impact = (
-        f"Could fuel ETH’s push in policy debates soon."
-        if "advocate" in headline.lower() else "Might shape crypto regulations ahead."
+    impact = (
+        f"Could push regulators to tighten safeguards soon."
+        if "scams" in headline.lower() else f"Might reshape crypto rules ahead."
     )
-    tweet2 = f"{extra_insights}\n{market_reaction}\n{future_impact}"
-    if len(tweet2) > 280:
+    tweet2 = f"{insights}\n{reaction}\n{impact}"
+    if len(tweet2) > 280:  # Trim impact if needed
         excess = len(tweet2) - 280
-        future_impact = future_impact[:-excess-3] + "..."  # Trim impact
-        tweet2 = f"{extra_insights}\n{market_reaction}\n{future_impact}"
+        impact = impact[:-(excess+3)] + "..." if excess < len(impact) else "Future TBD."
+        tweet2 = f"{insights}\n{reaction}\n{impact}"
     
     logger.info(f"News tweet 1: {tweet1}")
     logger.info(f"News tweet 2: {tweet2}")
