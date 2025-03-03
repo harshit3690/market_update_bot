@@ -4,11 +4,11 @@ import feedparser
 import sys
 import os
 import time
+import requests
 from datetime import datetime
 import pytz
 import logging
 from html.parser import HTMLParser
-from transformers import pipeline
 
 # HTML stripper
 class MLStripper(HTMLParser):
@@ -37,10 +37,13 @@ API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
+# Gemini API key from environment (add to GitHub Secrets as GEMINI_API_KEY)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Check credentials
 logger.info("Checking credentials...")
-for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET}.items():
+for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, 
+                    "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET, "GEMINI_API_KEY": GEMINI_API_KEY}.items():
     if not value:
         logger.error(f"{cred} is not set or empty!")
     else:
@@ -48,7 +51,8 @@ for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN"
 
 # Initialize Tweepy Client (v2)
 try:
-    client = tweepy.Client(consumer_key=API_KEY, consumer_secret=API_SECRET, access_token=ACCESS_TOKEN, access_token_secret=ACCESS_TOKEN_SECRET)
+    client = tweepy.Client(consumer_key=API_KEY, consumer_secret=API_SECRET, 
+                           access_token=ACCESS_TOKEN, access_token_secret=ACCESS_TOKEN_SECRET)
     logger.info("Tweepy client initialized.")
 except Exception as e:
     logger.error(f"Failed to initialize Tweepy client: {e}")
@@ -68,14 +72,6 @@ def test_x_auth():
 cg = CoinGeckoAPI()
 logger.info("CoinGecko API initialized.")
 
-# Initialize BART LLM
-try:
-    llm = pipeline("summarization", model="facebook/bart-large-cnn")
-    logger.info("BART LLM initialized.")
-except Exception as e:
-    logger.error(f"Failed to initialize BART LLM: {e}")
-    llm = None
-
 # Timezone
 ist = pytz.timezone('Asia/Kolkata')
 
@@ -86,6 +82,22 @@ posted_headlines = []
 SEO_TAGS = ["#Crypto", "#CryptoNews", "#CryptoUpdate", "#BullRun", "#BearMarket", "#Scams", "#Exploits", 
             "#BTC", "#ETH", "#XRP", "#SOL", "#Regulation", "#Security", "#Hacks", "#CongressCrypto", 
             "#CryptoRegulation"]
+
+# Gemini API function
+def gemini_refine(text, prompt):
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent"
+    headers = {"Content-Type": "application/json"}
+    data = {
+        "contents": [{"parts": [{"text": f"{prompt}: {text}"}]}],
+        "generationConfig": {"maxOutputTokens": 150, "temperature": 0.7}
+    }
+    response = requests.post(url, headers=headers, json=data, params={"key": GEMINI_API_KEY})
+    if response.status_code == 200:
+        result = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return result.strip()
+    else:
+        logger.error(f"Gemini API failed: {response.status_code} - {response.text}")
+        return None
 
 # Market Update Function
 def get_market_update():
@@ -127,19 +139,19 @@ def format_news_tweet(post):
     summary = post['summary'] if post['summary'] else post['title']
     input_text = f"{headline}. {summary}"
     
-    # Use BART if available
-    if llm:
-        try:
-            # Tweet 1: Generate with BART
-            tweet1_prompt = (
-                f"Summarize this crypto news into a tweet under 280 characters with 3 parts: "
-                f"headline (40 chars max), key info (50 chars max), context (60 chars max), "
-                f"followed by 3 SEO hashtags from {', '.join(SEO_TAGS)}. Use \\n\\n for line breaks. "
-                f"Ensure complete sentences: {input_text}"
-            )
-            tweet1_result = llm(tweet1_prompt, max_length=120, min_length=40, do_sample=False)[0]['summary_text']
+    # Use Gemini API
+    try:
+        # Tweet 1
+        tweet1_prompt = (
+            f"Refine this crypto news into a tweet under 280 characters with: "
+            f"headline (40 chars max), key info (50 chars max), context (60 chars max), "
+            f"3 SEO hashtags from {', '.join(SEO_TAGS)}. Use \\n\\n for breaks. "
+            f"Ensure full sentences"
+        )
+        tweet1_result = gemini_refine(input_text, tweet1_prompt)
+        if tweet1_result:
             tweet1_lines = tweet1_result.split('\n')
-            if len(tweet1_lines) >= 4:  # Expecting headline, key info, context, tags
+            if len(tweet1_lines) >= 4:
                 headline = tweet1_lines[0][:40]
                 key_info = tweet1_lines[1][:50]
                 context = tweet1_lines[2][:60]
@@ -147,16 +159,17 @@ def format_news_tweet(post):
                 tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{tags}"
             else:
                 tweet1 = f"🚨 {headline[:40]}! 📈\n\n{summary[:50]}\n\nMay sway trends.\n\n#Crypto #CryptoNews #Regulation"
-            
-            # Tweet 2: Only if enough unique info
-            remaining_summary = summary[len(key_info):].strip()
-            if len(remaining_summary) > 80:
-                tweet2_prompt = (
-                    f"From this crypto news, generate a reply tweet under 280 characters with 3 parts: "
-                    f"insights (70 chars max), reaction (70 chars max), impact (70 chars max), "
-                    f"followed by 1 hashtag from {', '.join(SEO_TAGS)}. Use \\n for line breaks: {input_text}"
-                )
-                tweet2_result = llm(tweet2_prompt, max_length=120, min_length=40, do_sample=False)[0]['summary_text']
+        
+        # Tweet 2: Optional
+        remaining_summary = summary[len(key_info):].strip()
+        if len(remaining_summary) > 80:
+            tweet2_prompt = (
+                f"Generate a reply tweet under 280 characters from this crypto news with: "
+                f"insights (70 chars max), reaction (70 chars max), impact (70 chars max), "
+                f"1 hashtag from {', '.join(SEO_TAGS)}. Use \\n for breaks"
+            )
+            tweet2_result = gemini_refine(input_text, tweet2_prompt)
+            if tweet2_result:
                 tweet2_lines = tweet2_result.split('\n')
                 if len(tweet2_lines) >= 4:
                     insights = tweet2_lines[0][:70]
@@ -168,15 +181,11 @@ def format_news_tweet(post):
                     tweet2 = None
             else:
                 tweet2 = None
-        except Exception as e:
-            logger.error(f"BART processing failed: {e}")
-            tweet1 = f"🚨 {headline[:40]}! 📈\n\n{summary[:50]}\n\nMay sway trends.\n\n#Crypto #CryptoNews #Regulation"
+        else:
             tweet2 = None
-    else:  # Fallback without BART
-        key_info = summary[:50] if len(summary) > 50 else summary
-        context = "May sway trends." if "scams" in headline.lower() else "Could shift policy."
-        tags = ["#Crypto", "#CryptoNews", "#Regulation"]
-        tweet1 = f"🚨 {headline[:40]}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
+    except Exception as e:
+        logger.error(f"Gemini processing failed: {e}")
+        tweet1 = f"🚨 {headline[:40]}! 📈\n\n{summary[:50]}\n\nMay sway trends.\n\n#Crypto #CryptoNews #Regulation"
         tweet2 = None if len(summary) < 80 else f"{summary[50:110]}\nMarkets eye impact.\nFuture TBD.\n#CryptoUpdate"
 
     logger.info(f"News tweet 1: {tweet1}")
