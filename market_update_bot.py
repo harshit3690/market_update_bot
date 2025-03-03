@@ -3,6 +3,7 @@ from pycoingecko import CoinGeckoAPI
 import feedparser
 import sys
 import os
+import time
 from datetime import datetime
 import pytz
 import logging
@@ -83,7 +84,7 @@ def get_market_update():
     
     tweet = "📊 Market Update:\n"
     arrow = "⬆️" if trending['price_change_percentage_24h'] > 0 else "⬇️"
-    tweet += f"🌟 #{trending['symbol'].upper()} (Trending) {trending['price_change_percentage_24h']:.2f}% {arrow} ${trending['current_price']:.2f}\n"
+    tweet += f"🌟 #{trending['symbol'].upper()} {trending['price_change_percentage_24h']:.2f}% {arrow} ${trending['current_price']:.2f}\n"
     for coin in [btc, eth] + others:
         arrow = "⬆️" if coin['price_change_percentage_24h'] > 0 else "⬇️"
         tweet += f"#{coin['symbol'].upper()} {coin['price_change_percentage_24h']:.2f}% {arrow} ${coin['current_price']:.2f}\n"
@@ -108,44 +109,52 @@ def get_crypto_news():
 def format_news_tweet(post):
     if not post:
         return None, None
-    headline = post['title'][:60]
+    headline = post['title'][:55]  # Shorter for space
     summary = post['summary'] if post['summary'] else post['title']  # Cleaned summary
-    pub_date = post['published'][:10]  # e.g., "2025-03-01"
+    pub_date = post['published'][:10]  # e.g., "2025-03-03"
     
     # Tweet 1: Main News Summary with spacing
-    key_info = summary[:50] if len(summary) > 50 else f"Reported on {pub_date}."
+    key_info = summary[:40] if len(summary) > 40 else f"Out {pub_date}."
     context = (
-        "This move could rally the crypto community and push for "
-        "greater regulatory clarity in the sector." if "advocate" in headline.lower()
-        else "This development might influence crypto markets and regulatory talks."
+        "This could rally the community and push for clearer crypto rules ahead."
+        if "advocate" in headline.lower() else "May sway markets and policy talks soon."
     )
-    tags = ["#Crypto", "#CryptoNews"]  # SEO base
+    tags = ["#Crypto", "#CryptoUpdate"]  # SEO base
     for word in headline.split():
         if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'xrp']:
             tags.append(f"#{word.upper()}")
         elif word.lower() in ['etf', 'regulation', 'partnership', 'futures']:
             tags.append(f"#{word.capitalize()}")
     if "Vitalik" in headline:
-        tags.append("#EthereumCommunity")
-    tags = tags[:3]  # Limit for space
+        tags.append("#ETHNews")
+    tags = tags[:3]
     
+    # Build Tweet 1 incrementally
     tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
+    if len(tweet1) > 280:
+        excess = len(tweet1) - 280
+        context = context[:-excess-3] + "..."  # Trim context, add ellipsis
+        tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
     
-    # Tweet 2: Deeper reply
-    extra_insights = f"CoinTelegraph details: {summary[50:100] if len(summary) > 50 else summary}."
+    # Tweet 2: Deeper reply, no "Via CoinTelegraph"
+    extra_insights = f"Details: {summary[40:100] if len(summary) > 40 else summary}."
     market_reaction = (
-        f"ETH holders and devs are vocal—{summary[100:150] if len(summary) > 100 else 'calls echo widely'}."
-        if "Vitalik" in headline else f"Markets await {summary[100:130] if len(summary) > 100 else 'next moves'}."
+        f"ETH holders vocal—{summary[100:150] if len(summary) > 100 else 'calls echo widely'}."
+        if "Vitalik" in headline else f"Markets watch {summary[100:130] if len(summary) > 100 else 'next moves'}."
     )
     future_impact = (
-        f"Could spark a push for crypto freedom and impact ETH’s role in policy debates."
-        if "advocate" in headline.lower() else "Might set a precedent for future crypto regulations."
+        f"Could fuel ETH’s push in policy debates soon."
+        if "advocate" in headline.lower() else "Might shape crypto regulations ahead."
     )
     tweet2 = f"{extra_insights}\n{market_reaction}\n{future_impact}"
+    if len(tweet2) > 280:
+        excess = len(tweet2) - 280
+        future_impact = future_impact[:-excess-3] + "..."  # Trim impact
+        tweet2 = f"{extra_insights}\n{market_reaction}\n{future_impact}"
     
     logger.info(f"News tweet 1: {tweet1}")
     logger.info(f"News tweet 2: {tweet2}")
-    return tweet1[:280], tweet2[:280]
+    return tweet1, tweet2
 
 # Tweet Function
 def tweet_content(content, reply_to=None):
@@ -155,6 +164,7 @@ def tweet_content(content, reply_to=None):
     try:
         if reply_to:
             tweet = client.create_tweet(text=content, in_reply_to_tweet_id=reply_to)
+            time.sleep(5)  # Delay between main tweet and reply
         else:
             tweet = client.create_tweet(text=content)
         logger.info(f"Tweeted at {datetime.now(ist)}: {tweet.data['id']}")
