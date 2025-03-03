@@ -1,6 +1,6 @@
 tweepy
 pycoingecko
-schedule
-requests
 pytz
-feedparser 
+feedparser
+transformers
+torch
