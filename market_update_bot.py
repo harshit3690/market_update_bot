@@ -109,15 +109,22 @@ def get_crypto_news():
 def format_news_tweet(post):
     if not post:
         return None, None
-    headline = post['title'][:60]  # Full headline
+    headline = post['title'][:65]  # More room for full headline
     summary = post['summary'] if post['summary'] else post['title']
-    pub_date = post['published'][:10]  # e.g., "2025-03-03"
+    pub_date = post['published'][:10]
     
     # Tweet 1: Main News Summary
-    key_info = summary[:60] if len(summary) > 60 else summary
+    # Find first full sentence in summary
+    key_info = ""
+    for i, char in enumerate(summary):
+        if char in '.!?':
+            key_info = summary[:i+1]
+            break
+    if not key_info or len(key_info) > 70:
+        key_info = summary[:70] if len(summary) > 70 else summary
     context = (
-        "Signals rising threats to crypto security."
-        if "scams" in headline.lower() else "May sway policy talks soon."
+        "Shows growing risks to crypto security."
+        if "scams" in headline.lower() else "May shift policy soon."
     )
     tags = ["#Crypto", "#CryptoUpdate"]
     for word in headline.split():
@@ -130,19 +137,25 @@ def format_news_tweet(post):
     tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
     if len(tweet1) > 280:
         excess = len(tweet1) - 280
-        context = context[:-(excess+3)] + "..." if excess < len(context) else "Impacts crypto."
+        if excess < len(context):
+            context = context[:-(excess+3)] + "..."
+        elif excess < len(key_info):
+            key_info = key_info[:-(excess+3)] + "..."
+        else:
+            headline = headline[:-(excess+3)] + "..."
         tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
     
     # Tweet 2: Only if enough extra info
-    if len(summary) > 100 and summary[60:] != key_info[:60]:  # Check for enough unique content
-        insights = f"{summary[60:120] if len(summary) > 60 else summary}."
+    remaining_summary = summary[len(key_info):].strip()
+    if len(remaining_summary) > 100:  # Check for enough unique content
+        insights = f"{remaining_summary[:60]}."
         reaction = (
-            f"Markets brace—hackers hit hard in Feb."
-            if "scams" in headline.lower() else f"Community eyes {summary[120:150] if len(summary) > 120 else 'next steps'}."
+            f"Traders brace—losses spark panic."
+            if "scams" in headline.lower() else f"Markets eye {remaining_summary[60:90] if len(remaining_summary) > 60 else 'impact'}."
         )
         impact = (
-            f"Could tighten crypto security rules soon."
-            if "scams" in headline.lower() else f"Might reshape regulations ahead."
+            f"Could drive tougher security laws soon."
+            if "scams" in headline.lower() else f"May reshape crypto rules ahead."
         )
         tweet2 = f"{insights}\n{reaction}\n{impact}"
         if len(tweet2) > 280:
@@ -167,7 +180,7 @@ def tweet_content(content, reply_to=None):
     try:
         if reply_to:
             tweet = client.create_tweet(text=content, in_reply_to_tweet_id=reply_to)
-            time.sleep(5)  # Delay if reply
+            time.sleep(5)
         else:
             tweet = client.create_tweet(text=content)
         logger.info(f"Tweeted at {datetime.now(ist)}: {tweet.data['id']}")
@@ -191,5 +204,5 @@ if __name__ == "__main__":
             tweet1, tweet2 = format_news_tweet(post)
             if tweet1:
                 tweet1_id = tweet_content(tweet1)
-                if tweet2 and tweet1_id:  # Only post Tweet 2 if it exists
+                if tweet2 and tweet1_id:
                     tweet_content(tweet2, tweet1_id)
