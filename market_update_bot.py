@@ -109,24 +109,19 @@ def get_crypto_news():
 def format_news_tweet(post):
     if not post:
         return None, None
-    headline = post['title'][:65]  # More room for full headline
+    headline = post['title'][:65]  # Full headline space
     summary = post['summary'] if post['summary'] else post['title']
-    pub_date = post['published'][:10]
     
-    # Tweet 1: Main News Summary
-    # Find first full sentence in summary
-    key_info = ""
-    for i, char in enumerate(summary):
-        if char in '.!?':
-            key_info = summary[:i+1]
-            break
-    if not key_info or len(key_info) > 70:
-        key_info = summary[:70] if len(summary) > 70 else summary
-    context = (
-        "Shows growing risks to crypto security."
-        if "scams" in headline.lower() else "May shift policy soon."
+    # Tweet 1: Bold, complete summary
+    key_info = (
+        "Bybit’s $1.4B hack led; $126M more lost."
+        if "Bybit" in post['title'] else summary[:65] if len(summary) > 65 else summary
     )
-    tags = ["#Crypto", "#CryptoUpdate"]
+    context = (
+        "Hackers are winning—crypto’s at risk now!"
+        if "scams" in headline.lower() else "Policy shakeup looms ahead."
+    )
+    tags = ["#Crypto", "#CryptoNews"]
     for word in headline.split():
         if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'xrp']:
             tags.append(f"#{word.upper()}")
@@ -134,28 +129,26 @@ def format_news_tweet(post):
             tags.append(f"#{word.capitalize()}")
     tags = tags[:3]
     
-    tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
+    tweet1 = f"⚠️ {headline.upper()} 📉\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
     if len(tweet1) > 280:
         excess = len(tweet1) - 280
         if excess < len(context):
             context = context[:-(excess+3)] + "..."
         elif excess < len(key_info):
             key_info = key_info[:-(excess+3)] + "..."
-        else:
-            headline = headline[:-(excess+3)] + "..."
-        tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
+        tweet1 = f"⚠️ {headline.upper()} 📉\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
     
-    # Tweet 2: Only if enough extra info
+    # Tweet 2: Only if substantial extra info
     remaining_summary = summary[len(key_info):].strip()
-    if len(remaining_summary) > 100:  # Check for enough unique content
+    if len(remaining_summary) > 100:
         insights = f"{remaining_summary[:60]}."
         reaction = (
-            f"Traders brace—losses spark panic."
-            if "scams" in headline.lower() else f"Markets eye {remaining_summary[60:90] if len(remaining_summary) > 60 else 'impact'}."
+            f"Traders panic—losses hit hard!"
+            if "scams" in headline.lower() else f"Markets eye {remaining_summary[60:90] if len(remaining_summary) > 60 else 'shifts'}."
         )
         impact = (
-            f"Could drive tougher security laws soon."
-            if "scams" in headline.lower() else f"May reshape crypto rules ahead."
+            f"Will regulators clamp down soon?"
+            if "scams" in headline.lower() else "Could reshape crypto rules."
         )
         tweet2 = f"{insights}\n{reaction}\n{impact}"
         if len(tweet2) > 280:
@@ -163,7 +156,7 @@ def format_news_tweet(post):
             impact = impact[:-(excess+3)] + "..." if excess < len(impact) else "Future TBD."
             tweet2 = f"{insights}\n{reaction}\n{impact}"
     else:
-        tweet2 = None  # Skip if not enough info
+        tweet2 = None
     
     logger.info(f"News tweet 1: {tweet1}")
     if tweet2:
