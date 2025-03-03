@@ -37,7 +37,6 @@ API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
-# Gemini API key from environment (add to GitHub Secrets as GEMINI_API_KEY)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Check credentials
@@ -158,7 +157,11 @@ def format_news_tweet(post):
                 tags = tweet1_lines[3].strip()
                 tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{tags}"
             else:
-                tweet1 = f"🚨 {headline[:40]}! 📈\n\n{summary[:50]}\n\nMay sway trends.\n\n#Crypto #CryptoNews #Regulation"
+                headline = headline[:40]
+                key_info = summary[:50] if len(summary) > 50 else summary
+                context = "May impact crypto trends soon."
+                tags = "#Crypto #CryptoNews #Regulation"
+                tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{tags}"
         
         # Tweet 2: Optional
         remaining_summary = summary[len(key_info):].strip()
@@ -185,7 +188,11 @@ def format_news_tweet(post):
             tweet2 = None
     except Exception as e:
         logger.error(f"Gemini processing failed: {e}")
-        tweet1 = f"🚨 {headline[:40]}! 📈\n\n{summary[:50]}\n\nMay sway trends.\n\n#Crypto #CryptoNews #Regulation"
+        headline = headline[:40]
+        key_info = summary[:50] if len(summary) > 50 else summary
+        context = "May impact crypto trends soon."
+        tags = "#Crypto #CryptoNews #Regulation"
+        tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{tags}"
         tweet2 = None if len(summary) < 80 else f"{summary[50:110]}\nMarkets eye impact.\nFuture TBD.\n#CryptoUpdate"
 
     logger.info(f"News tweet 1: {tweet1}")
