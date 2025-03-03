@@ -8,6 +8,7 @@ from datetime import datetime
 import pytz
 import logging
 from html.parser import HTMLParser
+from transformers import pipeline
 
 # HTML stripper
 class MLStripper(HTMLParser):
@@ -67,11 +68,23 @@ def test_x_auth():
 cg = CoinGeckoAPI()
 logger.info("CoinGecko API initialized.")
 
+# Initialize BART LLM
+try:
+    llm = pipeline("summarization", model="facebook/bart-large-cnn")
+    logger.info("BART LLM initialized.")
+except Exception as e:
+    logger.error(f"Failed to initialize BART LLM: {e}")
+    llm = None
+
 # Timezone
 ist = pytz.timezone('Asia/Kolkata')
 
 # Track news duplicates
 posted_headlines = []
+
+# Predefined SEO hashtag pool
+SEO_TAGS = ["#Crypto", "#CryptoNews", "#CryptoUpdate", "#BullRun", "#BearMarket", "#Scams", "#Exploits", 
+            "#BTC", "#ETH", "#XRP", "#SOL", "#Regulation", "#Security", "#Hacks"]
 
 # Market Update Function
 def get_market_update():
@@ -109,55 +122,62 @@ def get_crypto_news():
 def format_news_tweet(post):
     if not post:
         return None, None
-    headline = post['title'][:65]  # Full headline space
+    headline = post['title']
     summary = post['summary'] if post['summary'] else post['title']
+    input_text = f"{headline}. {summary}"
     
-    # Tweet 1: Bold, complete summary
-    key_info = (
-        "Bybit’s $1.4B hack led; $126M more lost."
-        if "Bybit" in post['title'] else summary[:65] if len(summary) > 65 else summary
-    )
-    context = (
-        "Hackers are winning—crypto’s at risk now!"
-        if "scams" in headline.lower() else "Policy shakeup looms ahead."
-    )
-    tags = ["#Crypto", "#CryptoNews"]
-    for word in headline.split():
-        if word.lower() in ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'xrp']:
-            tags.append(f"#{word.upper()}")
-        elif word.lower() in ['etf', 'regulation', 'partnership', 'futures', 'scams']:
-            tags.append(f"#{word.capitalize()}")
-    tags = tags[:3]
-    
-    tweet1 = f"⚠️ {headline.upper()} 📉\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
-    if len(tweet1) > 280:
-        excess = len(tweet1) - 280
-        if excess < len(context):
-            context = context[:-(excess+3)] + "..."
-        elif excess < len(key_info):
-            key_info = key_info[:-(excess+3)] + "..."
-        tweet1 = f"⚠️ {headline.upper()} 📉\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
-    
-    # Tweet 2: Only if substantial extra info
-    remaining_summary = summary[len(key_info):].strip()
-    if len(remaining_summary) > 100:
-        insights = f"{remaining_summary[:60]}."
-        reaction = (
-            f"Traders panic—losses hit hard!"
-            if "scams" in headline.lower() else f"Markets eye {remaining_summary[60:90] if len(remaining_summary) > 60 else 'shifts'}."
-        )
-        impact = (
-            f"Will regulators clamp down soon?"
-            if "scams" in headline.lower() else "Could reshape crypto rules."
-        )
-        tweet2 = f"{insights}\n{reaction}\n{impact}"
-        if len(tweet2) > 280:
-            excess = len(tweet2) - 280
-            impact = impact[:-(excess+3)] + "..." if excess < len(impact) else "Future TBD."
-            tweet2 = f"{insights}\n{reaction}\n{impact}"
-    else:
-        tweet2 = None
-    
+    # Use BART if available
+    if llm:
+        try:
+            # Tweet 1: Generate with BART
+            tweet1_prompt = (
+                f"Summarize this crypto news into a tweet under 280 characters with 3 parts: "
+                f"headline (up to 60 chars), key info (up to 70 chars), context (up to 80 chars), "
+                f"followed by 3 SEO hashtags from this list: {', '.join(SEO_TAGS)}. "
+                f"Use line breaks: {input_text}"
+            )
+            tweet1_result = llm(tweet1_prompt, max_length=150, min_length=50, do_sample=False)[0]['summary_text']
+            tweet1_lines = tweet1_result.split('\n')
+            if len(tweet1_lines) >= 4:  # Expecting headline, key info, context, tags
+                headline = tweet1_lines[0][:60]
+                key_info = tweet1_lines[1][:70]
+                context = tweet1_lines[2][:80]
+                tags = tweet1_lines[3].strip()
+                tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{tags}"
+            else:
+                tweet1 = f"🚨 {headline[:60]}! 📈\n\n{summary[:70]}\n\nMay sway crypto trends.\n\n#Crypto #CryptoNews #Scams"
+            
+            # Tweet 2: Only if enough unique info
+            remaining_summary = summary[len(key_info):].strip()
+            if len(remaining_summary) > 100:
+                tweet2_prompt = (
+                    f"From this crypto news, generate a reply tweet under 280 characters with 3 parts: "
+                    f"insights (up to 80 chars), reaction (up to 80 chars), impact (up to 80 chars), "
+                    f"followed by 1 hashtag from {', '.join(SEO_TAGS)}: {input_text}"
+                )
+                tweet2_result = llm(tweet2_prompt, max_length=150, min_length=50, do_sample=False)[0]['summary_text']
+                tweet2_lines = tweet2_result.split('\n')
+                if len(tweet2_lines) >= 4:
+                    insights = tweet2_lines[0][:80]
+                    reaction = tweet2_lines[1][:80]
+                    impact = tweet2_lines[2][:80]
+                    tag = tweet2_lines[3].strip()
+                    tweet2 = f"{insights}\n{reaction}\n{impact}\n{tag}"
+                else:
+                    tweet2 = None
+            else:
+                tweet2 = None
+        except Exception as e:
+            logger.error(f"BART processing failed: {e}")
+            tweet1 = f"🚨 {headline[:60]}! 📈\n\n{summary[:70]}\n\nMay sway crypto trends.\n\n#Crypto #CryptoNews #Scams"
+            tweet2 = None
+    else:  # Fallback without BART
+        key_info = summary[:70] if len(summary) > 70 else summary
+        context = "Signals rising threats." if "scams" in headline.lower() else "May shift policy."
+        tags = ["#Crypto", "#CryptoNews", "#Scams"]
+        tweet1 = f"🚨 {headline[:60]}! 📈\n\n{key_info}\n\n{context}\n\n{' '.join(tags)}"
+        tweet2 = None if len(summary) < 100 else f"{summary[70:130]}\nMarkets eye impact.\nFuture TBD.\n#CryptoUpdate"
+
     logger.info(f"News tweet 1: {tweet1}")
     if tweet2:
         logger.info(f"News tweet 2: {tweet2}")
