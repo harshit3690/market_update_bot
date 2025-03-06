@@ -4,7 +4,6 @@ import feedparser
 import sys
 import os
 import time
-import requests
 from datetime import datetime
 import pytz
 import logging
@@ -37,12 +36,11 @@ API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Check credentials
 logger.info("Checking credentials...")
 for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, 
-                    "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET, "GEMINI_API_KEY": GEMINI_API_KEY}.items():
+                    "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET}.items():
     if not value:
         logger.error(f"{cred} is not set or empty!")
     else:
@@ -80,23 +78,7 @@ posted_headlines = []
 # Predefined SEO hashtag pool
 SEO_TAGS = ["#Crypto", "#CryptoNews", "#CryptoUpdate", "#BullRun", "#BearMarket", "#Scams", "#Exploits", 
             "#BTC", "#ETH", "#XRP", "#SOL", "#Regulation", "#Security", "#Hacks", "#CongressCrypto", 
-            "#CryptoRegulation"]
-
-# Gemini API function
-def gemini_refine(text, prompt):
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent"
-    headers = {"Content-Type": "application/json"}
-    data = {
-        "contents": [{"parts": [{"text": f"{prompt}: {text}"}]}],
-        "generationConfig": {"maxOutputTokens": 150, "temperature": 0.7}
-    }
-    response = requests.post(url, headers=headers, json=data, params={"key": GEMINI_API_KEY})
-    if response.status_code == 200:
-        result = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-        return result.strip()
-    else:
-        logger.error(f"Gemini API failed: {response.status_code} - {response.text}")
-        return None
+            "#CryptoRegulation", "#DeFi"]
 
 # Market Update Function
 def get_market_update():
@@ -118,8 +100,8 @@ def get_market_update():
 
 # News Functions
 def get_crypto_news():
-    logger.info("Fetching news from CoinTelegraph...")
-    feed = feedparser.parse("https://cointelegraph.com/rss")
+    logger.info("Fetching news from Reuters Crypto RSS...")
+    feed = feedparser.parse("https://www.reuters.com/technology/cryptocurrency/rss.xml")
     for entry in feed.entries:
         headline = entry.title
         if headline not in posted_headlines:
@@ -135,66 +117,50 @@ def format_news_tweet(post):
     if not post:
         return None, None
     headline = post['title']
-    summary = post['summary'] if post['summary'] else post['title']
-    input_text = f"{headline}. {summary}"
+    summary = post['summary'] if post['summary'] else ""
+    input_text = f"{headline}. {summary}" if summary else headline
     
-    # Use Gemini API
-    try:
-        # Tweet 1
-        tweet1_prompt = (
-            f"Refine this crypto news into a tweet under 280 characters with: "
-            f"headline (40 chars max), key info (50 chars max), context (60 chars max), "
-            f"3 SEO hashtags from {', '.join(SEO_TAGS)}. Use \\n\\n for breaks. "
-            f"Ensure full sentences"
-        )
-        tweet1_result = gemini_refine(input_text, tweet1_prompt)
-        if tweet1_result:
-            tweet1_lines = tweet1_result.split('\n')
-            if len(tweet1_lines) >= 4:
-                headline = tweet1_lines[0][:40]
-                key_info = tweet1_lines[1][:50]
-                context = tweet1_lines[2][:60]
-                tags = tweet1_lines[3].strip()
-                tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{tags}"
-            else:
-                headline = headline[:40]
-                key_info = summary[:50] if len(summary) > 50 else summary
-                context = "May impact crypto trends soon."
-                tags = "#Crypto #CryptoNews #Regulation"
-                tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{tags}"
+    # Smart slicing for Tweet 1
+    tweet1_parts = [f"🚨 {headline}! 📈"]
+    tags = []
+    for tag in SEO_TAGS:
+        if tag[1:].lower() in input_text.lower() and len(tags) < 3:
+            tags.append(tag)
+    if not tags:
+        tags = ["#Crypto", "#CryptoNews", "#BTC" if "bitcoin" in headline.lower() else "#DeFi"]
+    
+    if summary:
+        key_info = summary[:60]
+        if len(key_info) == 60 and key_info[-1] not in '.!?':
+            last_space = key_info.rfind(' ')
+            key_info = key_info[:last_space] + "..." if last_space > 0 else key_info
+        tweet1_parts.append(key_info)
         
-        # Tweet 2: Optional
         remaining_summary = summary[len(key_info):].strip()
-        if len(remaining_summary) > 80:
-            tweet2_prompt = (
-                f"Generate a reply tweet under 280 characters from this crypto news with: "
-                f"insights (70 chars max), reaction (70 chars max), impact (70 chars max), "
-                f"1 hashtag from {', '.join(SEO_TAGS)}. Use \\n for breaks"
-            )
-            tweet2_result = gemini_refine(input_text, tweet2_prompt)
-            if tweet2_result:
-                tweet2_lines = tweet2_result.split('\n')
-                if len(tweet2_lines) >= 4:
-                    insights = tweet2_lines[0][:70]
-                    reaction = tweet2_lines[1][:70]
-                    impact = tweet2_lines[2][:70]
-                    tag = tweet2_lines[3].strip()
-                    tweet2 = f"{insights}\n{reaction}\n{impact}\n{tag}"
-                else:
-                    tweet2 = None
-            else:
-                tweet2 = None
-        else:
-            tweet2 = None
-    except Exception as e:
-        logger.error(f"Gemini processing failed: {e}")
-        headline = headline[:40]
-        key_info = summary[:50] if len(summary) > 50 else summary
-        context = "May impact crypto trends soon."
-        tags = "#Crypto #CryptoNews #Regulation"
-        tweet1 = f"🚨 {headline}! 📈\n\n{key_info}\n\n{context}\n\n{tags}"
-        tweet2 = None if len(summary) < 80 else f"{summary[50:110]}\nMarkets eye impact.\nFuture TBD.\n#CryptoUpdate"
-
+        if len(remaining_summary) > 20 and remaining_summary not in key_info:  # Useful context check
+            context = remaining_summary[:60]
+            if len(context) == 60 and context[-1] not in '.!?':
+                last_space = context.rfind(' ')
+                context = context[:last_space] + "..." if last_space > 0 else context
+            tweet1_parts.append(context)
+    
+    tweet1 = "\n\n".join(tweet1_parts) + "\n\n" + " ".join(tags)
+    if len(tweet1) > 280:  # Trim headline if over limit
+        excess = len(tweet1) - 280
+        headline_cut = headline[:-(excess + 5)] + "..."  # Leave room for ellipsis
+        tweet1 = f"🚨 {headline_cut}! 📈\n\n" + "\n\n".join(tweet1_parts[1:]) + "\n\n" + " ".join(tags[:2])  # Drop 1 tag
+    
+    # Tweet 2: Optional
+    tweet2 = None
+    if summary and len(remaining_summary) > 80:
+        insights = remaining_summary[60:120]
+        if len(insights) == 60 and insights[-1] not in '.!?':
+            last_space = insights.rfind(' ')
+            insights = insights[:last_space] + "..." if last_space > 0 else insights
+        tweet2 = f"{insights}\nMarkets watch closely.\nFuture TBD.\n#CryptoUpdate"
+        if len(tweet2) > 280:  # Rare, but trim if needed
+            tweet2 = f"{insights[:50]}...\nMarkets watch.\nFuture TBD.\n#CryptoUpdate"
+    
     logger.info(f"News tweet 1: {tweet1}")
     if tweet2:
         logger.info(f"News tweet 2: {tweet2}")
@@ -225,7 +191,8 @@ if __name__ == "__main__":
     cron_time = sys.argv[1] if len(sys.argv) > 1 else "manual"
     logger.info(f"Running for cron: {cron_time}")
     market_times = ["0 8 * * *", "0 15 * * *"]  # 13:30, 20:30 IST
-    if cron_time in market_times:
+    run_market = "--market" in sys.argv
+    if cron_time in market_times or run_market:
         content = get_market_update()
         tweet_content(content)
     else:
