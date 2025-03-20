@@ -148,11 +148,14 @@ def format_news_tweet(post):
         return None, None
     headline = post['title']
     summary = enhance_with_ai(post['url']) if post['url'] else ""
-    input_text = f"{headline}. {summary}" if summary else headline
+    # Avoid repetition by checking similarity
+    if summary and headline.lower() in summary.lower()[:len(headline) + 10]:
+        summary = summary[len(headline):].strip()  # Strip headline from summary
     
     # Smart slicing for Tweet 1
     tweet1_parts = [f"🚨 {headline}! 📈"]
     tags = []
+    input_text = f"{headline}. {summary}" if summary else headline
     for tag in SEO_TAGS:
         if tag[1:].lower() in input_text.lower() and len(tags) < 3:
             tags.append(tag)
@@ -164,15 +167,17 @@ def format_news_tweet(post):
         if len(key_info) == 60 and key_info[-1] not in '.!?':
             last_space = key_info.rfind(' ')
             key_info = key_info[:last_space] + "..." if last_space > 0 else key_info
-        tweet1_parts.append(key_info)
+        if key_info.strip() and key_info.lower() not in headline.lower():  # Unique check
+            tweet1_parts.append(key_info)
         
         remaining_summary = summary[len(key_info):].strip()
-        if len(remaining_summary) > 20 and remaining_summary not in key_info:  # Useful context check
+        if remaining_summary and len(remaining_summary) > 20:
             context = remaining_summary[:60]
-            if len(context) == 60 and context[-1] not in '.!?':
-                last_space = context.rfind(' ')
-                context = context[:last_space] + "..." if last_space > 0 else context
-            tweet1_parts.append(context)
+            if context.lower() not in headline.lower() and context.lower() not in key_info.lower():
+                if len(context) == 60 and context[-1] not in '.!?':
+                    last_space = context.rfind(' ')
+                    context = context[:last_space] + "..." if last_space > 0 else context
+                tweet1_parts.append(context)
     
     tweet1 = "\n\n".join(tweet1_parts) + "\n\n" + " ".join(tags)
     if len(tweet1) > 280:  # Trim headline if over limit
@@ -180,16 +185,30 @@ def format_news_tweet(post):
         headline_cut = headline[:-(excess + 5)] + "..."  # Leave room for ellipsis
         tweet1 = f"🚨 {headline_cut}! 📈\n\n" + "\n\n".join(tweet1_parts[1:]) + "\n\n" + " ".join(tags[:2])  # Drop 1 tag
     
-    # Tweet 2: Optional
+    # Tweet 2: Start at next sentence
     tweet2 = None
     if summary and len(remaining_summary) > 80:
-        insights = remaining_summary[60:120]
-        if len(insights) == 60 and insights[-1] not in '.!?':
-            last_space = insights.rfind(' ')
-            insights = insights[:last_space] + "..." if last_space > 0 else insights
-        tweet2 = f"{insights}\nMarkets watch closely.\nFuture TBD.\n#CryptoUpdate"
-        if len(tweet2) > 280:  # Rare, but trim if needed
-            tweet2 = f"{insights[:50]}...\nMarkets watch.\nFuture TBD.\n#CryptoUpdate"
+        # Find next sentence start
+        next_sentence_start = remaining_summary.find('.') + 1 if '.' in remaining_summary else 0
+        if next_sentence_start > 0 and next_sentence_start < len(remaining_summary):
+            insights = remaining_summary[next_sentence_start:].strip()[:60]
+            if len(insights) == 60 and insights[-1] not in '.!?':
+                last_space = insights.rfind(' ')
+                insights = insights[:last_space] + "..." if last_space > 0 else insights
+            if insights and insights.lower() not in headline.lower():
+                next_chunk = remaining_summary[next_sentence_start + len(insights):].strip()[:60]
+                if len(next_chunk) == 60 and next_chunk[-1] not in '.!?':
+                    last_space = next_chunk.rfind(' ')
+                    next_chunk = next_chunk[:last_space] + "..." if last_space > 0 else next_chunk
+                tweet2 = f"{insights}\n{next_chunk}\n#CryptoUpdate" if next_chunk else f"{insights}\n#CryptoUpdate"
+        if not tweet2:  # Fallback if no sentence break
+            insights = remaining_summary[60:120]
+            if len(insights) == 60 and insights[-1] not in '.!?':
+                last_space = insights.rfind(' ')
+                insights = insights[:last_space] + "..." if last_space > 0 else insights
+            tweet2 = f"{insights}\n#CryptoUpdate"
+        if len(tweet2) > 280:  # Rare, trim if needed
+            tweet2 = f"{insights[:50]}...\n#CryptoUpdate"
     
     logger.info(f"News tweet 1: {tweet1}")
     if tweet2:
