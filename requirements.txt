@@ -1,5 +1,4 @@
 tweepy
 pycoingecko
-pytz
-feedparser
 requests
+pytz
