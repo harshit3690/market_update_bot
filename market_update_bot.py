@@ -8,6 +8,7 @@ from datetime import datetime
 import pytz
 import logging
 from html.parser import HTMLParser
+import re
 
 # HTML stripper for cleaning text
 class MLStripper(HTMLParser):
@@ -120,18 +121,28 @@ def get_crypto_news():
         logger.error(f"Error fetching CryptoPanic news: {e}")
         return None
 
+def clean_text(text):
+    # Remove lines with CSS or font-related keywords
+    lines = text.split('\n')
+    cleaned_lines = [line for line in lines if not any(keyword in line.lower() for keyword in ['@font-face', 'font-family', '.woff', '.eot', '.ttf'])]
+    return '\n'.join(cleaned_lines)
+
 def enhance_with_ai(url):
     logger.info(f"Scraping and enhancing URL: {url}")
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        text = strip_tags(response.text)[:1000]  # First 1000 chars of cleaned text
+        text = strip_tags(response.text)
+        text = clean_text(text)[:1000]  # First 1000 chars of cleaned text
         hf_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
         headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
         payload = {"inputs": text}
         hf_response = requests.post(hf_url, headers=headers, json=payload, timeout=10)
         hf_response.raise_for_status()
         summary = hf_response.json()[0]['summary_text']
+        if any(keyword in summary.lower() for keyword in ['@font-face', '.eot']):
+            logger.warning("AI summary contains junk; discarding.")
+            return ""
         logger.info(f"AI summary: {summary}")
         return summary
     except (requests.RequestException, KeyError, IndexError) as e:
@@ -140,26 +151,23 @@ def enhance_with_ai(url):
 
 def get_ai_tags(text):
     logger.info("Generating AI tags...")
-    try:
-        hf_url = "https://api-inference.huggingface.co/models/distilbert-base-uncased"
-        headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-        payload = {"inputs": text[:512], "parameters": {"task": "token-classification"}}  # Limit to 512 chars
-        response = requests.post(hf_url, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()
-        entities = response.json()
-        tags = set()
-        for entity in entities:
-            word = entity['word'].capitalize()
-            if len(word) > 2 and word.lower() not in ['the', 'and', 'for', 'with', 'will']:
-                tags.add(f"#{word}")
-            if len(tags) >= 4:
-                break
-        tags = list(tags)[:3] if tags else ["#Crypto", "#CryptoNews", "#BTC"]
-        logger.info(f"AI tags: {tags}")
-        return tags
-    except (requests.RequestException, KeyError, IndexError) as e:
-        logger.error(f"Error generating AI tags: {e}")
-        return ["#Crypto", "#CryptoNews", "#BTC"]
+    words = re.findall(r'\b\w+\b', text.lower())
+    stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
+    tags = [f"#{word.capitalize()}" for word in words if word not in stop_words and len(word) > 2]
+    unique_tags = list(dict.fromkeys(tags))[:3]  # Keep first 3 unique tags
+    if not unique_tags:
+        unique_tags = ["#Crypto", "#CryptoNews"]
+    logger.info(f"AI tags: {unique_tags}")
+    return unique_tags
+
+def find_last_period(text, max_length):
+    if len(text) <= max_length:
+        return text
+    truncated = text[:max_length]
+    last_period = truncated.rfind('.')
+    if last_period > 0:
+        return truncated[:last_period + 1]
+    return truncated + "..."
 
 def format_news_tweet(post):
     if not post:
@@ -167,49 +175,33 @@ def format_news_tweet(post):
     headline = post['title']
     summary = enhance_with_ai(post['url']) if post['url'] else ""
     if summary and headline.lower() in summary.lower()[:len(headline) + 10]:
-        summary = summary[len(headline):].strip()  # Strip headline from summary
+        summary = summary[len(headline):].strip()  # Strip headline overlap
     
     # AI-generated tags
     input_text = f"{headline}. {summary}" if summary else headline
     tags = get_ai_tags(input_text)
     
-    # Tweet 1: Headline + Key Info
-    tweet1_parts = [f"🚨 {headline}! 📈"]
-    if summary:
-        key_info = summary[:100]
-        if len(key_info) == 100 and key_info[-1] not in '.!?':
-            last_space = key_info.rfind(' ')
-            key_info = key_info[:last_space] + "..." if last_space > 0 else key_info
-        if key_info.strip() and key_info.lower() not in headline.lower():  # Unique check
-            tweet1_parts.append(key_info)
+    # Tweet 1: Headline + Info
+    tweet1_base = f"🚨 {headline}! 📈\n\n"
+    info_length = 280 - len(tweet1_base) - len("\n\n" + " ".join(tags)) - 10  # Buffer
+    info = find_last_period(summary, info_length) if summary else ""
+    tweet1 = tweet1_base + info
+    if len(tweet1 + "\n\n" + " ".join(tags)) <= 280:
+        tweet1 += "\n\n" + " ".join(tags)
+    else:
+        logger.info("Skipping tags in Tweet 1 due to space constraints.")
     
-    tweet1 = "\n\n".join(tweet1_parts) + "\n\n" + " ".join(tags)
-    if len(tweet1) > 280:  # Trim headline if over limit
-        excess = len(tweet1) - 280
-        headline_cut = headline[:-(excess + 5)] + "..."  # Leave room for ellipsis
-        tweet1 = f"🚨 {headline_cut}! 📈\n\n" + "\n\n".join(tweet1_parts[1:]) + "\n\n" + " ".join(tags[:2])  # Drop 1 tag
-    
-    # Tweet 2: Context
+    # Tweet 2: More Info
     tweet2 = None
-    if summary and len(summary) > 100:
-        remaining_summary = summary[len(key_info):].strip()
+    if summary and len(summary) > len(info):
+        remaining_summary = summary[len(info):].strip()
         if remaining_summary:
-            next_sentence_start = remaining_summary.find('.') + 1 if '.' in remaining_summary else 0
-            if next_sentence_start > 0 and next_sentence_start < len(remaining_summary):
-                context = remaining_summary[next_sentence_start:].strip()[:100]
-                if len(context) == 100 and context[-1] not in '.!?':
-                    last_space = context.rfind(' ')
-                    context = context[:last_space] + "..." if last_space > 0 else context
-                if context and context.lower() not in headline.lower():
-                    tweet2 = f"{context}\n\n{' '.join(tags)}"
-            if not tweet2:  # Fallback if no sentence break
-                context = remaining_summary[:100]
-                if len(context) == 100 and context[-1] not in '.!?':
-                    last_space = context.rfind(' ')
-                    context = context[:last_space] + "..." if last_space > 0 else context
-                tweet2 = f"{context}\n\n{' '.join(tags)}"
-        if tweet2 and len(tweet2) > 280:  # Trim if needed
-            tweet2 = f"{context[:80]}...\n\n{' '.join(tags[:2])}"
+            tweet2_base = ""
+            more_info_length = 280 - len("\n\n" + " ".join(tags)) - 10
+            more_info = find_last_period(remaining_summary, more_info_length)
+            tweet2 = more_info
+            if len(tweet2 + "\n\n" + " ".join(tags)) <= 280:
+                tweet2 += "\n\n" + " ".join(tags)
     
     logger.info(f"News tweet 1: {tweet1}")
     if tweet2:
