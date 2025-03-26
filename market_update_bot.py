@@ -10,7 +10,6 @@ import logging
 from html.parser import HTMLParser
 import re
 
-# HTML stripper for cleaning text
 class MLStripper(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -28,21 +27,16 @@ def strip_tags(html):
     s.feed(html)
     return s.get_data()
 
-# Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# X API credentials
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
-
-# CryptoPanic and Hugging Face API keys
 CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 
-# Check credentials
 logger.info("Checking credentials...")
 for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, 
                     "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET, "CRYPTOPANIC_API_KEY": CRYPTOPANIC_API_KEY, 
@@ -52,7 +46,6 @@ for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN"
     else:
         logger.info(f"{cred} is loaded successfully.")
 
-# Initialize Tweepy Client (v2)
 try:
     client = tweepy.Client(consumer_key=API_KEY, consumer_secret=API_SECRET, 
                            access_token=ACCESS_TOKEN, access_token_secret=ACCESS_TOKEN_SECRET)
@@ -61,7 +54,6 @@ except Exception as e:
     logger.error(f"Failed to initialize Tweepy client: {e}")
     raise
 
-# Test X auth
 def test_x_auth():
     try:
         user = client.get_me()
@@ -71,21 +63,16 @@ def test_x_auth():
         logger.error(f"X API auth failed: {e}")
         return False
 
-# Initialize CoinGecko
 cg = CoinGeckoAPI()
 logger.info("CoinGecko API initialized.")
 
-# Timezone
 ist = pytz.timezone('Asia/Kolkata')
-
-# Track news duplicates
 posted_headlines = []
 
-# Market Update Function (Trending = Highest 24h Pump)
 def get_market_update():
     logger.info("Fetching market update...")
     coins = cg.get_coins_markets(vs_currency='usd', order='market_cap_desc', per_page=10, page=1)
-    trending = max(coins, key=lambda x: x['price_change_percentage_24h'] or 0)  # Highest 24h pump
+    trending = max(coins, key=lambda x: x['price_change_percentage_24h'] or 0)
     btc = next(c for c in coins if c['symbol'] == 'btc')
     eth = next(c for c in coins if c['symbol'] == 'eth')
     others = [c for c in coins if c['id'] not in [trending['id'], btc['id'], eth['id']]][:2]
@@ -99,7 +86,6 @@ def get_market_update():
     logger.info(f"Market tweet: {tweet}")
     return tweet.strip()
 
-# News Functions
 def get_crypto_news():
     logger.info("Fetching news from CryptoPanic API...")
     url = f"https://cryptopanic.com/api/v1/posts/?auth_token={CRYPTOPANIC_API_KEY}&filter=crypto"
@@ -122,10 +108,9 @@ def get_crypto_news():
         return None
 
 def clean_text(text):
-    # Remove lines with CSS or font-related keywords
     lines = text.split('\n')
-    cleaned_lines = [line for line in lines if not any(keyword in line.lower() for keyword in ['@font-face', 'font-family', '.woff', '.eot', '.ttf'])]
-    return '\n'.join(cleaned_lines)
+    cleaned_lines = [line for line in lines if not any(keyword in line.lower() for keyword in ['@font-face', 'font-family', '.woff', '.eot', '.ttf', 'http'])]
+    return ' '.join(cleaned_lines)
 
 def enhance_with_ai(url):
     logger.info(f"Scraping and enhancing URL: {url}")
@@ -133,14 +118,17 @@ def enhance_with_ai(url):
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         text = strip_tags(response.text)
-        text = clean_text(text)[:1000]  # First 1000 chars of cleaned text
+        text = clean_text(text)[:1000]
+        if not text.strip() or len(text.split()) < 10:
+            logger.warning("URL content too short or junk; skipping AI.")
+            return ""
         hf_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
         headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
         payload = {"inputs": text}
         hf_response = requests.post(hf_url, headers=headers, json=payload, timeout=10)
         hf_response.raise_for_status()
         summary = hf_response.json()[0]['summary_text']
-        if any(keyword in summary.lower() for keyword in ['@font-face', '.eot']):
+        if any(keyword in summary.lower() for keyword in ['@font-face', '.eot', 'http']):
             logger.warning("AI summary contains junk; discarding.")
             return ""
         logger.info(f"AI summary: {summary}")
@@ -154,7 +142,7 @@ def get_ai_tags(text):
     words = re.findall(r'\b\w+\b', text.lower())
     stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
     tags = [f"#{word.capitalize()}" for word in words if word not in stop_words and len(word) > 2]
-    unique_tags = list(dict.fromkeys(tags))[:3]  # Keep first 3 unique tags
+    unique_tags = list(dict.fromkeys(tags))[:3]
     if not unique_tags:
         unique_tags = ["#Crypto", "#CryptoNews"]
     logger.info(f"AI tags: {unique_tags}")
@@ -175,28 +163,22 @@ def format_news_tweet(post):
     headline = post['title']
     summary = enhance_with_ai(post['url']) if post['url'] else ""
     if summary and headline.lower() in summary.lower()[:len(headline) + 10]:
-        summary = summary[len(headline):].strip()  # Strip headline overlap
+        summary = summary[len(headline):].strip()
     
-    # AI-generated tags
     input_text = f"{headline}. {summary}" if summary else headline
     tags = get_ai_tags(input_text)
     
-    # Tweet 1: Headline + Info
     tweet1_base = f"🚨 {headline}! 📈\n\n"
-    info_length = 280 - len(tweet1_base) - len("\n\n" + " ".join(tags)) - 10  # Buffer
-    info = find_last_period(summary, info_length) if summary else ""
+    info_length = 280 - len(tweet1_base) - len("\n\n" + " ".join(tags)) - 10
+    info = find_last_period(summary, min(150, info_length)) if summary else ""
     tweet1 = tweet1_base + info
     if len(tweet1 + "\n\n" + " ".join(tags)) <= 280:
         tweet1 += "\n\n" + " ".join(tags)
-    else:
-        logger.info("Skipping tags in Tweet 1 due to space constraints.")
     
-    # Tweet 2: More Info
     tweet2 = None
     if summary and len(summary) > len(info):
         remaining_summary = summary[len(info):].strip()
         if remaining_summary:
-            tweet2_base = ""
             more_info_length = 280 - len("\n\n" + " ".join(tags)) - 10
             more_info = find_last_period(remaining_summary, more_info_length)
             tweet2 = more_info
@@ -210,7 +192,6 @@ def format_news_tweet(post):
         logger.info("Tweet 2 skipped—insufficient unique info.")
     return tweet1, tweet2
 
-# Tweet Function
 def tweet_content(content, reply_to=None):
     if not test_x_auth():
         logger.error("Skipping tweet due to auth failure.")
@@ -227,18 +208,17 @@ def tweet_content(content, reply_to=None):
         logger.error(f"Error tweeting: {e}")
         return None
 
-# Main Logic
 if __name__ == "__main__":
     logger.info("Starting bot...")
     cron_time = sys.argv[1] if len(sys.argv) > 1 else "manual"
     logger.info(f"Running for cron: {cron_time}")
-    market_times = ["0 8 * * *", "0 15 * * *"]  # 13:30, 20:30 IST
+    market_times = ["0 8 * * *", "0 15 * * *"]
     run_market = "--market" in sys.argv
     if cron_time in market_times or run_market:
         content = get_market_update()
         tweet_content(content)
     else:
-        if not cron_time.startswith("0"):  # Reset duplicates for news runs only
+        if not cron_time.startswith("0"):
             posted_headlines.clear()
             logger.info("Cleared posted_headlines for news run.")
         post = get_crypto_news()
