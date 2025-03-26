@@ -101,24 +101,25 @@ def get_crypto_news():
 
 def ai_write_tweet(headline):
     logger.info(f"Generating AI tweet for: {headline}")
-    for attempt in range(2):
+    for attempt in range(3):  # Increased to 3 retries
         try:
             hf_url = "https://api-inference.huggingface.co/models/distilgpt2"
             headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
             prompt = (
-                f"Write a Twitter update for: '{headline}'. Format it as: '🚨 [headline]! 📈\\n\\n[info with hook in 20 chars]. [question?]\\n\\n#[tag1] #[tag2] #[tag3]'. "
-                f"Keep it under 280 chars. Use only 🚨 and 📈 emojis. End info at a period. Make it bold, crypto-savvy, and engaging. "
-                f"No code terms (var, http). Tweet 1 must stand alone."
+                f"Write a tweet for: '{headline}'. Use: '🚨 [headline]! 📈\\n\\n[info]. [hook?]\\n\\n#[tag1] #[tag2] #[tag3]'. "
+                f"Under 280 chars, bold, engaging, no code (var, http). Tweet 1 stands alone."
             )
             payload = {"inputs": prompt, "parameters": {"max_length": 150, "temperature": 0.7}}
-            response = requests.post(hf_url, headers=headers, json=payload, timeout=15)
+            response = requests.post(hf_url, headers=headers, json=payload, timeout=20)  # Timeout to 20s
             response.raise_for_status()
             tweet = response.json()[0]['generated_text'].strip()
+            logger.info(f"AI raw output: {tweet}")
             
-            # Clean AI output
-            if any(keyword in tweet.lower() for keyword in ['var', 'http', '.js']):
-                logger.warning("AI output contains code; using fallback.")
-                return f"🚨 {headline}! 📈\n\nMore to come—stay tuned!\n\n#Crypto #News", None
+            # Smarter code check: >2 instances of code terms
+            code_count = sum(tweet.lower().count(kw) for kw in ['var', 'http', '.js'])
+            if code_count > 2:
+                logger.warning("AI output has too many code terms; using fallback.")
+                return generate_fallback(headline), None
             
             # Split if needed
             if len(tweet) > 280:
@@ -126,7 +127,7 @@ def ai_write_tweet(headline):
                 tweet1 = ""
                 tweet2 = None
                 for i, sent in enumerate(sentences):
-                    if len(tweet1 + sent + (". " if i < len(sentences) - 1 else "")) <= 230:  # Tag space
+                    if len(tweet1 + sent + (". " if i < len(sentences) - 1 else "")) <= 230:
                         tweet1 += sent + (". " if i < len(sentences) - 1 else "")
                     else:
                         tweet2 = ". ".join(sentences[i:]).strip()
@@ -137,9 +138,9 @@ def ai_write_tweet(headline):
                 tweet1 = tweet
                 tweet2 = None
             
-            # Extract tags from tweet or headline
+            # Extract and apply tags
             tags = get_relevant_tags(tweet1 if tweet2 else headline)
-            tweet1_clean = tweet1.split('\n\n')[:-1]  # Remove any AI tags
+            tweet1_clean = tweet1.split('\n\n')[:-1]  # Remove AI tags
             tweet1 = "\n\n".join(tweet1_clean)
             if len(tweet1 + "\n\n" + " ".join(tags)) <= 280:
                 tweet1 += "\n\n" + " ".join(tags)
@@ -154,7 +155,14 @@ def ai_write_tweet(headline):
             logger.error(f"AI tweet failed (attempt {attempt + 1}): {e}")
             time.sleep(5)
     logger.error("AI tweet generation failed after retries.")
-    return f"🚨 {headline}! 📈\n\nMore to come—stay tuned!\n\n#Crypto #News", None
+    return generate_fallback(headline), None
+
+def generate_fallback(headline):
+    words = re.findall(r'\b\w+\b', headline.lower())
+    stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
+    key_term = next((w.capitalize() for w in words if w not in stop_words and len(w) > 2), "Crypto")
+    tags = get_relevant_tags(headline)
+    return f"🚨 {headline}! 📈\n\n{key_term} shakes crypto—big move?\n\n{' '.join(tags)}"
 
 def get_relevant_tags(text):
     logger.info("Generating relevant tags...")
@@ -174,7 +182,7 @@ def format_news_tweet(post):
     # Readability check
     if len(re.findall(r'\b\w+\b', tweet1)) < 5:
         logger.warning("Tweet 1 too short or unclear; using fallback.")
-        tweet1 = f"🚨 {headline}! 📈\n\nMore to come—stay tuned!\n\n#Crypto #News"
+        tweet1 = generate_fallback(headline)
         tweet2 = None
     
     logger.info(f"News tweet 1: {tweet1}")
@@ -204,7 +212,7 @@ if __name__ == "__main__":
     logger.info("Starting bot...")
     cron_time = sys.argv[1] if len(sys.argv) > 1 else "manual"
     logger.info(f"Running for cron: {cron_time}")
-    market_times = ["0 8 * * *", "0 15 * * *"]  # 13:30, 20:30 IST
+    market_times = ["0 8 * * *", "0 15 * * *"]
     run_market = "--market" in sys.argv
     if cron_time in market_times or run_market:
         content = get_market_update()
