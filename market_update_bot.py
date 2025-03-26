@@ -101,7 +101,7 @@ def get_crypto_news():
 
 def ai_write_tweet(headline):
     logger.info(f"Generating AI tweet for: {headline}")
-    for attempt in range(3):  # Increased to 3 retries
+    for attempt in range(3):
         try:
             hf_url = "https://api-inference.huggingface.co/models/distilgpt2"
             headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
@@ -110,7 +110,7 @@ def ai_write_tweet(headline):
                 f"Under 280 chars, bold, engaging, no code (var, http). Tweet 1 stands alone."
             )
             payload = {"inputs": prompt, "parameters": {"max_length": 150, "temperature": 0.7}}
-            response = requests.post(hf_url, headers=headers, json=payload, timeout=20)  # Timeout to 20s
+            response = requests.post(hf_url, headers=headers, json=payload, timeout=20)
             response.raise_for_status()
             tweet = response.json()[0]['generated_text'].strip()
             logger.info(f"AI raw output: {tweet}")
@@ -158,17 +158,20 @@ def ai_write_tweet(headline):
     return generate_fallback(headline), None
 
 def generate_fallback(headline):
+    logger.info("Generating fallback tweet...")
     words = re.findall(r'\b\w+\b', headline.lower())
     stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
-    key_term = next((w.capitalize() for w in words if w not in stop_words and len(w) > 2), "Crypto")
+    terms = [w.capitalize() for w in words if w not in stop_words and len(w) > 2][:2]
+    term1 = terms[0] if terms else "Crypto"
+    term2 = terms[1] if len(terms) > 1 else "Market"
     tags = get_relevant_tags(headline)
-    return f"🚨 {headline}! 📈\n\n{key_term} shakes crypto—big move?\n\n{' '.join(tags)}"
+    return f"🚨 {headline}! 📈\n\n{term1} hits {term2}—bullish or bust?\n\n{' '.join(tags)}"
 
 def get_relevant_tags(text):
     logger.info("Generating relevant tags...")
     words = re.findall(r'\b\w+\b', text.lower())
     stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
-    tags = [word.capitalize() for word in words if word not in stop_words and len(word) > 2][:3]
+    tags = [word.capitalize() for word in words if word not in stop_words and len(w) > 2][:3]
     if not tags:
         tags = ["Crypto", "News"]
     return [f"#{tag}" for tag in tags]
