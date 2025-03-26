@@ -106,23 +106,31 @@ def ai_write_tweet(headline):
             hf_url = "https://api-inference.huggingface.co/models/distilgpt2"
             headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
             prompt = (
-                f"Write a tweet for: '{headline}'. Use: '🚨 [headline]! 📈\\n\\n[info]. [hook?]\\n\\n#[tag1] #[tag2] #[tag3]'. "
-                f"Under 280 chars, bold, engaging, no code (var, http). Tweet 1 stands alone."
+                f"Tweet: '🚨 {headline}! 📈\\n\\n[info]. [hook?]\\n\\n#[tag1] #[tag2]'. "
+                f"Under 280 chars, bold, engaging, no code."
             )
-            payload = {"inputs": prompt, "parameters": {"max_length": 150, "temperature": 0.7}}
+            payload = {"inputs": prompt, "parameters": {"max_length": 100, "temperature": 0.7}}
             response = requests.post(hf_url, headers=headers, json=payload, timeout=20)
             response.raise_for_status()
             tweet = response.json()[0]['generated_text'].strip()
             logger.info(f"AI raw output: {tweet}")
             
-            # Smarter code check: >2 instances of code terms
+            # Clean prompt echo
+            if tweet.startswith("Tweet:"):
+                tweet = tweet.split('\n', 1)[1] if '\n' in tweet else tweet[6:].strip()
+            
+            # Truncate early
+            if len(tweet) > 280:
+                tweet = tweet[:280]
+            
+            # Smarter code check: >2 instances
             code_count = sum(tweet.lower().count(kw) for kw in ['var', 'http', '.js'])
             if code_count > 2:
                 logger.warning("AI output has too many code terms; using fallback.")
                 return generate_fallback(headline), None
             
             # Split if needed
-            if len(tweet) > 280:
+            if len(tweet) > 280:  # Double-check after cleaning
                 sentences = tweet.split('. ')
                 tweet1 = ""
                 tweet2 = None
@@ -171,7 +179,7 @@ def get_relevant_tags(text):
     logger.info("Generating relevant tags...")
     words = re.findall(r'\b\w+\b', text.lower())
     stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
-    tags = [word.capitalize() for word in words if word not in stop_words and len(w) > 2][:3]
+    tags = [word.capitalize() for word in words if word not in stop_words and len(word) > 2][:3]
     if not tags:
         tags = ["Crypto", "News"]
     return [f"#{tag}" for tag in tags]
@@ -216,7 +224,7 @@ if __name__ == "__main__":
     cron_time = sys.argv[1] if len(sys.argv) > 1 else "manual"
     logger.info(f"Running for cron: {cron_time}")
     market_times = ["0 8 * * *", "0 15 * * *"]
-    run_market = "--market" in sys.argv
+    run_market = "--market" in sys.argvmphithe
     if cron_time in market_times or run_market:
         content = get_market_update()
         tweet_content(content)
