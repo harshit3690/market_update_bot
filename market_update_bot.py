@@ -167,13 +167,12 @@ def ai_write_tweet(headline):
 
 def generate_fallback(headline):
     logger.info("Generating fallback tweet...")
-    # Strip ticker in parens
     clean_headline = re.sub(r'\s*\([^)]+\)', '', headline).lower()
     words = re.findall(r'\b\w+\b', clean_headline)
     stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
-    terms = [w.capitalize() for w in words if w not in stop_words and len(w) > 2][:2]
+    terms = [w.capitalize() for w in words if w not in stop_words and len(w) > 2]
     term1 = terms[0] if terms else "Crypto"
-    term2 = terms[1] if len(terms) > 1 else "Price"
+    term2 = next((w.capitalize() for w in terms if w.lower() == "price"), terms[1] if len(terms) > 1 else "Price")
     tags = get_relevant_tags(headline)
     return f"🚨 {headline}! 📈\n\n{term1} flips {term2}—bullish or bust?\n\n{' '.join(tags)}"
 
@@ -181,12 +180,14 @@ def get_relevant_tags(text):
     logger.info("Generating relevant tags...")
     words = re.findall(r'\b\w+\b', text.lower())
     stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
-    # Extract ticker from parens if present
-    ticker = re.search(r'\(([^)]+)\)', text)
     tags = []
+    # Extract ticker from parens
+    ticker = re.search(r'\(([^)]+)\)', text)
     if ticker:
         tags.append(ticker.group(1).upper())  # e.g., #XLM
-    tags.extend([word.upper() for word in words if word not in stop_words and len(word) > 2 and word.lower() != tags[0].lower() if tags else True][:2])
+    # Add up to 2 more unique tags
+    extra_tags = [word.upper() for word in words if word not in stop_words and len(word) > 2 and (not tags or word.lower() != tags[0].lower())][:2]
+    tags.extend(extra_tags)
     if len(tags) < 2:
         tags.extend(["PRICE", "CRYPTO"][len(tags):2])  # Fill with defaults
     return [f"#{tag}" for tag in tags[:2]]  # Limit to 2 tags
