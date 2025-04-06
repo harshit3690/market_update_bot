@@ -12,19 +12,17 @@ import re
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# API credentials
-API_KEY = os.getenv("API_KEY")  # X API Key
+API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # New: DeepSeek API key
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")   # New: Mistral API key
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")  # Single key for OpenRouter
 
 logger.info("Checking credentials...")
 for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, 
                     "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET, "CRYPTOPANIC_API_KEY": CRYPTOPANIC_API_KEY, 
-                    "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY, "MISTRAL_API_KEY": MISTRAL_API_KEY}.items():
+                    "OPENROUTER_API_KEY": OPENROUTER_API_KEY}.items():
     if not value:
         logger.error(f"{cred} is not set or empty!")
     else:
@@ -102,16 +100,15 @@ def get_crypto_news():
 
 def ai_write_tweet(headline, use_mistral=False):
     logger.info(f"Generating AI tweet for: {headline} {'(Mistral fallback)' if use_mistral else '(DeepSeek)'}")
-    api_key = MISTRAL_API_KEY if use_mistral else DEEPSEEK_API_KEY
-    url = "https://api.mixtral.ai/v1/completions" if use_mistral else "https://api.deepseek.com/v1/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    url = "https://openrouter.ai/api/v1/completions"
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     prompt = (
         f"Craft a bold, engaging crypto tweet under 280 characters for: '{headline}'. "
         f"Include 🚨 and 📈 emojis, a catchy hook (e.g., 'moon soon?' or 'breakout?'), "
         f"and 2-3 relevant #hashtags (coin-specific + trend). No placeholders or code."
     )
     payload = {
-        "model": "mistral-large-2" if use_mistral else "deepseek-reasoner",
+        "model": "mistralai/mixtral-large-2" if use_mistral else "deepseek/deepseek-r1",
         "prompt": prompt,
         "max_tokens": 100,
         "temperature": 0.7
@@ -125,7 +122,7 @@ def ai_write_tweet(headline, use_mistral=False):
             logger.info(f"AI raw output: {tweet}")
             
             # Clean and validate
-            tweet = tweet.strip("'\"")  # Remove stray quotes
+            tweet = tweet.strip("'\"")
             if len(tweet) > 280:
                 tweet = tweet[:280]
             word_count = len(re.findall(r'\b\w+\b', tweet))
@@ -134,15 +131,10 @@ def ai_write_tweet(headline, use_mistral=False):
                 re.search(r'\d+\.\d+\.\d+', tweet) or 
                 not re.search(r'#[A-Za-z0-9]+', tweet)):
                 logger.warning("AI output failed quality rules; retrying or switching.")
-                if not use_mistral and attempt == 2:
-                    return ai_write_tweet(headline, use_mistral=True)  # Switch to Mistral
                 continue
             
-            # Ensure emojis and coin mention
             if '🚨' not in tweet or '📈' not in tweet or headline.split()[0].lower() not in tweet.lower():
                 logger.warning("AI output missing required elements; retrying or switching.")
-                if not use_mistral and attempt == 2:
-                    return ai_write_tweet(headline, use_mistral=True)
                 continue
             
             return tweet, None
@@ -150,20 +142,23 @@ def ai_write_tweet(headline, use_mistral=False):
             logger.error(f"AI tweet failed (attempt {attempt + 1}): {e}")
             time.sleep(5)
     
-    logger.error("AI tweet generation failed after retries; using fallback.")
+    if not use_mistral:
+        logger.info("DeepSeek failed; switching to Mistral.")
+        return ai_write_tweet(headline, use_mistral=True)
+    logger.error("Mistral failed too; using fallback.")
     return generate_fallback(headline), None
 
 def generate_fallback(headline):
     logger.info("Generating fallback tweet...")
     clean_headline = re.sub(r'\s*\([^)]+\)', '', headline).lower()
     words = re.findall(r'\b\w+\b', clean_headline)
-    stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
+    stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as', 'says'}
     terms = [w.capitalize() for w in words if w not in stop_words and len(w) > 2]
     term1 = terms[0] if terms else "Crypto"
-    term2 = next((w.capitalize() for w in terms if w.lower() in ["price", "trading"]), terms[1] if len(terms) > 1 else "Price")
+    term2 = next((w.capitalize() for w in terms if w.lower() in ["price", "trading", "market"]), terms[1] if len(terms) > 1 else "Market")
     ticker = re.search(r'\(([^)]+)\)', headline)
-    tags = [f"#{ticker.group(1).upper()}" if ticker else "#Crypto", "#Crypto"]
-    return f"🚨 {headline}! 📈\n\n{term1} flips {term2}—bullish or bust?\n\n{' '.join(tags)}"
+    tags = [f"#{ticker.group(1).upper()}" if ticker else "#Crypto", "#Market"]
+    return f"🚨 {headline}! 📈\n\n{term1} shifts {term2}—bullish or bust?\n\n{' '.join(tags)}"
 
 def format_news_tweet(post):
     if not post:
