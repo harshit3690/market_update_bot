@@ -12,17 +12,19 @@ import re
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-API_KEY = os.getenv("API_KEY")
+# API credentials
+API_KEY = os.getenv("API_KEY")  # X API Key
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
-HF_API_TOKEN = os.getenv("HF_API_TOKEN")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # New: DeepSeek API key
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")   # New: Mistral API key
 
 logger.info("Checking credentials...")
 for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, 
                     "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET, "CRYPTOPANIC_API_KEY": CRYPTOPANIC_API_KEY, 
-                    "HF_API_TOKEN": HF_API_TOKEN}.items():
+                    "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY, "MISTRAL_API_KEY": MISTRAL_API_KEY}.items():
     if not value:
         logger.error(f"{cred} is not set or empty!")
     else:
@@ -47,7 +49,6 @@ def test_x_auth():
 
 cg = CoinGeckoAPI()
 logger.info("CoinGecko API initialized.")
-
 ist = pytz.timezone('Asia/Kolkata')
 posted_headlines = []
 
@@ -99,70 +100,57 @@ def get_crypto_news():
     logger.error("News fetch failed after retries.")
     return None
 
-def ai_write_tweet(headline):
-    logger.info(f"Generating AI tweet for: {headline}")
+def ai_write_tweet(headline, use_mistral=False):
+    logger.info(f"Generating AI tweet for: {headline} {'(Mistral fallback)' if use_mistral else '(DeepSeek)'}")
+    api_key = MISTRAL_API_KEY if use_mistral else DEEPSEEK_API_KEY
+    url = "https://api.mixtral.ai/v1/completions" if use_mistral else "https://api.deepseek.com/v1/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    prompt = (
+        f"Craft a bold, engaging crypto tweet under 280 characters for: '{headline}'. "
+        f"Include 🚨 and 📈 emojis, a catchy hook (e.g., 'moon soon?' or 'breakout?'), "
+        f"and 2-3 relevant #hashtags (coin-specific + trend). No placeholders or code."
+    )
+    payload = {
+        "model": "mistral-large-2" if use_mistral else "deepseek-reasoner",
+        "prompt": prompt,
+        "max_tokens": 100,
+        "temperature": 0.7
+    }
+    
     for attempt in range(3):
         try:
-            hf_url = "https://api-inference.huggingface.co/models/distilgpt2"
-            headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-            prompt = (
-                f"Tweet: '🚨 {headline}! 📈\\n\\n[info]. [hook?]\\n\\n#[tag1] #[tag2]'. "
-                f"Under 280 chars, bold, engaging, no code."
-            )
-            payload = {"inputs": prompt, "parameters": {"max_length": 100, "temperature": 0.7}}
-            response = requests.post(hf_url, headers=headers, json=payload, timeout=20)
+            response = requests.post(url, headers=headers, json=payload, timeout=20)
             response.raise_for_status()
-            tweet = response.json()[0]['generated_text'].strip()
+            tweet = response.json()['choices'][0]['text'].strip()
             logger.info(f"AI raw output: {tweet}")
             
-            # Clean prompt echo
-            if tweet.startswith("Tweet:"):
-                tweet = tweet.split('\n', 1)[1] if '\n' in tweet else tweet[6:].strip()
-            
-            # Truncate early
+            # Clean and validate
+            tweet = tweet.strip("'\"")  # Remove stray quotes
             if len(tweet) > 280:
                 tweet = tweet[:280]
+            word_count = len(re.findall(r'\b\w+\b', tweet))
+            if (word_count < 5 or word_count > 20 or 
+                '[info]' in tweet or '#[tag' in tweet or 
+                re.search(r'\d+\.\d+\.\d+', tweet) or 
+                not re.search(r'#[A-Za-z0-9]+', tweet)):
+                logger.warning("AI output failed quality rules; retrying or switching.")
+                if not use_mistral and attempt == 2:
+                    return ai_write_tweet(headline, use_mistral=True)  # Switch to Mistral
+                continue
             
-            # Smarter code check: >2 instances
-            code_count = sum(tweet.lower().count(kw) for kw in ['var', 'http', '.js'])
-            if code_count > 2:
-                logger.warning("AI output has too many code terms; using fallback.")
-                return generate_fallback(headline), None
+            # Ensure emojis and coin mention
+            if '🚨' not in tweet or '📈' not in tweet or headline.split()[0].lower() not in tweet.lower():
+                logger.warning("AI output missing required elements; retrying or switching.")
+                if not use_mistral and attempt == 2:
+                    return ai_write_tweet(headline, use_mistral=True)
+                continue
             
-            # Split if needed
-            if len(tweet) > 280:  # Double-check after cleaning
-                sentences = tweet.split('. ')
-                tweet1 = ""
-                tweet2 = None
-                for i, sent in enumerate(sentences):
-                    if len(tweet1 + sent + (". " if i < len(sentences) - 1 else "")) <= 230:
-                        tweet1 += sent + (". " if i < len(sentences) - 1 else "")
-                    else:
-                        tweet2 = ". ".join(sentences[i:]).strip()
-                        break
-                if not tweet2:
-                    tweet1 = tweet[:280]
-            else:
-                tweet1 = tweet
-                tweet2 = None
-            
-            # Extract and apply tags
-            tags = get_relevant_tags(tweet1 if tweet2 else headline)
-            tweet1_clean = tweet1.split('\n\n')[:-1]  # Remove AI tags
-            tweet1 = "\n\n".join(tweet1_clean)
-            if len(tweet1 + "\n\n" + " ".join(tags)) <= 280:
-                tweet1 += "\n\n" + " ".join(tags)
-            if tweet2:
-                tweet2_clean = tweet2.split('\n\n')[:-1]
-                tweet2 = "\n\n".join(tweet2_clean)
-                if len(tweet2 + "\n\n" + " ".join(tags)) <= 280:
-                    tweet2 += "\n\n" + " ".join(tags)
-            
-            return tweet1, tweet2
+            return tweet, None
         except (requests.RequestException, KeyError, IndexError) as e:
             logger.error(f"AI tweet failed (attempt {attempt + 1}): {e}")
             time.sleep(5)
-    logger.error("AI tweet generation failed after retries.")
+    
+    logger.error("AI tweet generation failed after retries; using fallback.")
     return generate_fallback(headline), None
 
 def generate_fallback(headline):
@@ -172,38 +160,16 @@ def generate_fallback(headline):
     stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
     terms = [w.capitalize() for w in words if w not in stop_words and len(w) > 2]
     term1 = terms[0] if terms else "Crypto"
-    term2 = next((w.capitalize() for w in terms if w.lower() == "price"), terms[1] if len(terms) > 1 else "Price")
-    tags = get_relevant_tags(headline)
+    term2 = next((w.capitalize() for w in terms if w.lower() in ["price", "trading"]), terms[1] if len(terms) > 1 else "Price")
+    ticker = re.search(r'\(([^)]+)\)', headline)
+    tags = [f"#{ticker.group(1).upper()}" if ticker else "#Crypto", "#Crypto"]
     return f"🚨 {headline}! 📈\n\n{term1} flips {term2}—bullish or bust?\n\n{' '.join(tags)}"
-
-def get_relevant_tags(text):
-    logger.info("Generating relevant tags...")
-    words = re.findall(r'\b\w+\b', text.lower())
-    stop_words = {'the', 'and', 'for', 'with', 'will', 'to', 'in', 'of', 'a', 'on', 'is', 'as'}
-    tags = []
-    # Extract ticker from parens
-    ticker = re.search(r'\(([^)]+)\)', text)
-    if ticker:
-        tags.append(ticker.group(1).upper())  # e.g., #XLM
-    # Add up to 2 more unique tags
-    extra_tags = [word.upper() for word in words if word not in stop_words and len(word) > 2 and (not tags or word.lower() != tags[0].lower())][:2]
-    tags.extend(extra_tags)
-    if len(tags) < 2:
-        tags.extend(["PRICE", "CRYPTO"][len(tags):2])  # Fill with defaults
-    return [f"#{tag}" for tag in tags[:2]]  # Limit to 2 tags
 
 def format_news_tweet(post):
     if not post:
         return None, None
     headline = post['title']
     tweet1, tweet2 = ai_write_tweet(headline)
-    
-    # Readability check
-    if len(re.findall(r'\b\w+\b', tweet1)) < 5:
-        logger.warning("Tweet 1 too short or unclear; using fallback.")
-        tweet1 = generate_fallback(headline)
-        tweet2 = None
-    
     logger.info(f"News tweet 1: {tweet1}")
     if tweet2:
         logger.info(f"News tweet 2: {tweet2}")
