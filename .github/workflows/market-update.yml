@@ -3,7 +3,7 @@ name: Market Update Bot
 on:
   schedule:
     - cron: "30 19 * * *"  # 01:00 IST (19:30 UTC, India is +5:30)
-  workflow_dispatch:       # Manual trigger option
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -15,7 +15,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"  # Latest stable as of 2025
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -29,6 +29,5 @@ jobs:
           ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           ACCESS_TOKEN_SECRET: ${{ secrets.ACCESS_TOKEN_SECRET }}
           CRYPTOPANIC_API_KEY: ${{ secrets.CRYPTOPANIC_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-        run: python market_update_bot.py "manual"  # "manual" for news run
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # Updated
+        run: python market_update_bot.py "manual"
