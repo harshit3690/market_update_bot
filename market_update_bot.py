@@ -8,6 +8,8 @@ from datetime import datetime
 import pytz
 import logging
 import re
+import json
+import atexit
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -17,12 +19,15 @@ API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
+GROK_API_KEY = os.getenv("GROK_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+MEMORY_FILE = "memory.json"
 
 logger.info("Checking credentials...")
 for cred, value in {"API_KEY": API_KEY, "API_SECRET": API_SECRET, "ACCESS_TOKEN": ACCESS_TOKEN, 
                     "ACCESS_TOKEN_SECRET": ACCESS_TOKEN_SECRET, "CRYPTOPANIC_API_KEY": CRYPTOPANIC_API_KEY, 
-                    "OPENROUTER_API_KEY": OPENROUTER_API_KEY}.items():
+                    "GROK_API_KEY": GROK_API_KEY, "OPENROUTER_API_KEY": OPENROUTER_API_KEY}.items():
     if not value:
         logger.error(f"{cred} is not set or empty!")
     else:
@@ -36,19 +41,40 @@ except Exception as e:
     logger.error(f"Failed to initialize Tweepy client: {e}")
     raise
 
-def test_x_auth():
+def load_memory():
     try:
-        user = client.get_me()
-        logger.info(f"X API auth successful. Logged in as: {user.data.username}")
-        return True
-    except tweepy.TweepyException as e:
-        logger.error(f"X API auth failed: {e}")
-        return False
+        with open(MEMORY_FILE, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"posted_headlines": [], "tweet_stats": {}}
+
+def save_memory(memory):
+    with open(MEMORY_FILE, 'w') as f:
+        json.dump(memory, f)
+
+memory = load_memory()
+posted_headlines = memory.get("posted_headlines", [])
+tweet_stats = memory.get("tweet_stats", {})
+
+def save_on_exit():
+    save_memory({"posted_headlines": posted_headlines, "tweet_stats": tweet_stats})
+atexit.register(save_on_exit)
+
+def test_x_auth():
+    for attempt in range(3):
+        try:
+            user = client.get_me()
+            logger.info(f"X API auth successful. Logged in as: {user.data.username}")
+            return True
+        except tweepy.TweepyException as e:
+            logger.error(f"X API auth failed (attempt {attempt + 1}): {e}")
+            time.sleep(5)
+    logger.error("X API auth failed after retries.")
+    return False
 
 cg = CoinGeckoAPI()
 logger.info("CoinGecko API initialized.")
 ist = pytz.timezone('Asia/Kolkata')
-posted_headlines = []
 
 def get_market_update():
     logger.info("Fetching market update...")
@@ -86,8 +112,9 @@ def get_crypto_news():
                 headline = post['title']
                 if headline not in posted_headlines:
                     posted_headlines.append(headline)
-                    if len(posted_headlines) > 20:
+                    if len(posted_headlines) > 50:
                         posted_headlines.pop(0)
+                    save_memory({"posted_headlines": posted_headlines, "tweet_stats": tweet_stats})
                     logger.info(f"Selected news: {headline}")
                     return {"title": headline}
             logger.info("No new news found.")
@@ -98,22 +125,34 @@ def get_crypto_news():
     logger.error("News fetch failed after retries.")
     return None
 
-def ai_write_tweet(headline, use_mistral=False):
-    logger.info(f"Generating AI tweet for: {headline} {'(Mistral fallback)' if use_mistral else '(DeepSeek)'}")
-    url = "https://openrouter.ai/api/v1/completions"
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    prompt = (
-        f"Craft a bold, engaging crypto tweet under 280 characters for: '{headline}'. "
-        f"Include 🚨 and 📈 emojis, a catchy hook (e.g., 'moon soon?' or 'breakout?'), "
-        f"and 2-3 relevant #hashtags (coin-specific + trend). No placeholders or code. "
-        f"Return only the tweet text."
-    )
-    payload = {
-        "model": "mistralai/mixtral-large-2" if use_mistral else "deepseek/deepseek-r1",
-        "prompt": prompt,
-        "max_length": 100,  # OpenRouter uses max_length, not max_tokens
-        "temperature": 0.7
-    }
+def ai_write_tweet(headline, use_openrouter=False, use_mistral=False):
+    logger.info(f"Generating AI tweet for: {headline} {'(Mistral via OpenRouter)' if use_mistral else '(DeepSeek via OpenRouter)' if use_openrouter else '(Grok)'}")
+    if not use_openrouter:
+        url = "https://api.x.ai/v1/completions"
+        headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "grok-3",
+            "prompt": (
+                f"Analyze this crypto news headline: '{headline}'. Identify key crypto coins mentioned (e.g., Bitcoin, Ethereum) or imply Bitcoin if none are explicit. "
+                f"Craft a bold, engaging tweet under 280 characters. Include 🚨 and 📈 emojis, a catchy hook (e.g., 'moon soon?', 'crash coming?'), "
+                f"and 2-3 relevant #hashtags (coin-specific + trend). Use crypto slang (e.g., HODL, stack). No placeholders or code. Return only the tweet text."
+            ),
+            "max_tokens": 100,
+            "temperature": 0.7
+        }
+    else:
+        url = "https://openrouter.ai/api/v1/completions"
+        headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "mistralai/mixtral-large-2" if use_mistral else "deepseek/deepseek-r1",
+            "prompt": (
+                f"Analyze this crypto news headline: '{headline}'. Identify key crypto coins mentioned (e.g., Bitcoin, Ethereum) or imply Bitcoin if none are explicit. "
+                f"Craft a bold, engaging tweet under 280 characters. Include 🚨 and 📈 emojis, a catchy hook (e.g., 'moon soon?', 'crash coming?'), "
+                f"and 2-3 relevant #hashtags (coin-specific + trend). Use crypto slang (e.g., HODL, stack). No placeholders or code. Return only the tweet text."
+            ),
+            "max_length": 100,
+            "temperature": 0.7
+        }
     
     for attempt in range(3):
         try:
@@ -142,9 +181,12 @@ def ai_write_tweet(headline, use_mistral=False):
             logger.error(f"AI tweet failed (attempt {attempt + 1}): {e}")
             time.sleep(5)
     
+    if not use_openrouter:
+        logger.info("Grok failed; switching to DeepSeek via OpenRouter.")
+        return ai_write_tweet(headline, use_openrouter=True)
     if not use_mistral:
-        logger.info("DeepSeek failed; switching to Mistral.")
-        return ai_write_tweet(headline, use_mistral=True)
+        logger.info("DeepSeek failed; switching to Mistral via OpenRouter.")
+        return ai_write_tweet(headline, use_openrouter=True, use_mistral=True)
     logger.error("Mistral failed too; using fallback.")
     return generate_fallback(headline), None
 
@@ -159,6 +201,18 @@ def generate_fallback(headline):
     tags = [f"#{ticker.group(1).upper()}" if ticker else "#BTC", "#Crypto"]
     return f"🚨 {headline}! 📈\n\n{term1} HODLs #Bitcoin—crash or moon?\n\n{' '.join(tags)}"
 
+def track_tweet_performance(tweet_id):
+    try:
+        tweet = client.get_tweet(tweet_id, tweet_fields=["public_metrics"])
+        views = tweet.data["public_metrics"]["impression_count"]
+        tweet_stats[tweet_id] = {"views": views, "timestamp": datetime.now(ist).isoformat()}
+        save_memory({"posted_headlines": posted_headlines, "tweet_stats": tweet_stats})
+        logger.info(f"Tweet {tweet_id} has {views} views.")
+        return views
+    except tweepy.TweepyException as e:
+        logger.error(f"Failed to track tweet {tweet_id}: {e}")
+        return 0
+
 def format_news_tweet(post):
     if not post:
         return None, None
@@ -172,20 +226,26 @@ def format_news_tweet(post):
     return tweet1, tweet2
 
 def tweet_content(content, reply_to=None):
-    if not test_x_auth():
-        logger.error("Skipping tweet due to auth failure.")
-        return None
-    try:
-        if reply_to:
-            tweet = client.create_tweet(text=content, in_reply_to_tweet_id=reply_to)
-            time.sleep(5)
-        else:
-            tweet = client.create_tweet(text=content)
-        logger.info(f"Tweeted at {datetime.now(ist)}: {tweet.data['id']}")
-        return tweet.data['id']
-    except tweepy.TweepyException as e:
-        logger.error(f"Error tweeting: {e}")
-        return None
+    for attempt in range(3):
+        if not test_x_auth():
+            logger.error(f"Skipping tweet due to auth failure (attempt {attempt + 1}).")
+            time.sleep(10)
+            continue
+        try:
+            if reply_to:
+                tweet = client.create_tweet(text=content, in_reply_to_tweet_id=reply_to)
+                time.sleep(5)
+            else:
+                tweet = client.create_tweet(text=content)
+            tweet_id = tweet.data['id']
+            logger.info(f"Tweeted at {datetime.now(ist)}: {tweet_id}")
+            track_tweet_performance(tweet_id)
+            return tweet_id
+        except tweepy.TweepyException as e:
+            logger.error(f"Error tweeting (attempt {attempt + 1}): {e}")
+            time.sleep(10)
+    logger.error("Failed to tweet after retries.")
+    return None
 
 if __name__ == "__main__":
     logger.info("Starting bot...")
@@ -198,7 +258,6 @@ if __name__ == "__main__":
         tweet_content(content)
     else:
         if not cron_time.startswith("0"):
-            posted_headlines.clear()
             logger.info("Cleared posted_headlines for news run.")
         post = get_crypto_news()
         if post:
